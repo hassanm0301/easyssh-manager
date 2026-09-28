@@ -8,11 +8,20 @@ workspace is open.
 
 ## Implemented features
 
-The current release provides the extension foundation; it intentionally does
-not establish SSH or SFTP connections yet.
+The current release provides the extension foundation and local connection
+management. It intentionally does not establish SSH or SFTP connections yet.
 
-- Native **EasySSH Manager** Activity Bar container with an empty
-  **Connections** TreeView and refresh command.
+- Native **EasySSH Manager** Activity Bar container with an ordered, nested,
+  drag-and-drop **Connections** TreeView and complete connection/folder menus.
+- Versioned, validated connection metadata in VS Code global state, including
+  corruption recovery and serialized atomic updates.
+- Passwords and key passphrases stored only through VS Code SecretStorage, with
+  explicit keep, replace, clear, duplicate, and recursive-delete behavior.
+- CSP- and nonce-protected connection editor with strict host-side request
+  validation and agent-access policy controls.
+- Read-only OpenSSH config discovery and preview with guarded includes,
+  wildcard/default inheritance, safe token expansion, warnings, duplicate
+  handling, and per-profile import choices.
 - Event-driven desktop activation and clean extension lifecycle management.
 - Validated configuration for connection timeouts, keepalives, SFTP idle time,
   transfer-size limits, and log level.
@@ -30,10 +39,10 @@ not establish SSH or SFTP connections yet.
 
 ## Current scope
 
-Connection profiles, credential storage, OpenSSH import, SSH terminals, SFTP
-browsing, remote editing, transfers, and MCP access are planned for subsequent
-milestones. No credentials, network connections, telemetry, or background
-services are implemented at this stage.
+SSH terminals, host trust, SFTP browsing, remote editing, transfers, and MCP
+access are planned for subsequent milestones. Connection actions remain clear
+placeholders until their transport milestones. The extension performs no
+network connection and includes no telemetry or background service.
 
 ## License
 
