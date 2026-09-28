@@ -1,0 +1,12 @@
+Port 2222
+Protocol 2
+UsePAM no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+AllowUsers easyssh-test
+Subsystem sftp internal-sftp
+AuthorizedKeysFile .ssh/authorized_keys
+LogLevel VERBOSE
+PidFile /run/sshd.pid
