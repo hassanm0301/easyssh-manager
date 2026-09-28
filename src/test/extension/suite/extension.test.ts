@@ -8,4 +8,25 @@ suite('EasySSH Manager extension', () => {
     await extension.activate();
     assert.equal(extension.isActive, true);
   });
+
+  test('registers the complete milestone-two command surface', async () => {
+    const expected = [
+      'addConnection',
+      'addFolder',
+      'editConnection',
+      'duplicateConnection',
+      'deleteConnection',
+      'renameFolder',
+      'moveItem',
+      'deleteFolder',
+      'importSshConfig',
+      'refreshConnections',
+      'openSsh',
+      'openSftp',
+      'testConnection',
+    ].map((name) => `easysshManager.${name}`);
+    const registered = new Set(await vscode.commands.getCommands(true));
+    for (const command of expected) assert.ok(registered.has(command), `${command} is registered`);
+    await vscode.commands.executeCommand('easysshManager.refreshConnections');
+  });
 });
