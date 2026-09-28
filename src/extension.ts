@@ -4,10 +4,10 @@ import { ExtensionApplication } from './application/ExtensionApplication';
 
 let application: ExtensionApplication | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
-  application = new ExtensionApplication(vscode);
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  application = new ExtensionApplication(vscode, context);
   context.subscriptions.push(application);
-  application.activate();
+  await application.activate();
 }
 
 export async function deactivate(): Promise<void> {

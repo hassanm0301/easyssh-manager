@@ -33,6 +33,18 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onView:easysshManager.connections",
+    "onCommand:easysshManager.addConnection",
+    "onCommand:easysshManager.addFolder",
+    "onCommand:easysshManager.editConnection",
+    "onCommand:easysshManager.duplicateConnection",
+    "onCommand:easysshManager.deleteConnection",
+    "onCommand:easysshManager.renameFolder",
+    "onCommand:easysshManager.moveItem",
+    "onCommand:easysshManager.deleteFolder",
+    "onCommand:easysshManager.importSshConfig",
+    "onCommand:easysshManager.openSsh",
+    "onCommand:easysshManager.openSftp",
+    "onCommand:easysshManager.testConnection",
     "onCommand:easysshManager.refreshConnections",
     "onFileSystem:remote-sftp"
   ],
@@ -63,16 +75,154 @@
     "viewsWelcome": [
       {
         "view": "easysshManager.connections",
-        "contents": "No connections yet.\n[Refresh Connections](command:easysshManager.refreshConnections)"
+        "contents": "No connections yet.\n[Add Connection](command:easysshManager.addConnection) · [Add Folder](command:easysshManager.addFolder)\n[Import OpenSSH Config](command:easysshManager.importSshConfig)"
       }
     ],
     "commands": [
+      {
+        "command": "easysshManager.addConnection",
+        "title": "EasySSH Manager: Add Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "easysshManager.addFolder",
+        "title": "EasySSH Manager: Add Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "easysshManager.editConnection",
+        "title": "EasySSH Manager: Edit Connection"
+      },
+      {
+        "command": "easysshManager.duplicateConnection",
+        "title": "EasySSH Manager: Duplicate Connection"
+      },
+      {
+        "command": "easysshManager.deleteConnection",
+        "title": "EasySSH Manager: Delete Connection"
+      },
+      {
+        "command": "easysshManager.renameFolder",
+        "title": "EasySSH Manager: Rename Folder"
+      },
+      {
+        "command": "easysshManager.moveItem",
+        "title": "EasySSH Manager: Move Item"
+      },
+      {
+        "command": "easysshManager.deleteFolder",
+        "title": "EasySSH Manager: Delete Folder"
+      },
+      {
+        "command": "easysshManager.importSshConfig",
+        "title": "EasySSH Manager: Import OpenSSH Config"
+      },
+      {
+        "command": "easysshManager.openSsh",
+        "title": "EasySSH Manager: Open SSH",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "easysshManager.openSftp",
+        "title": "EasySSH Manager: Open SFTP",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "easysshManager.testConnection",
+        "title": "EasySSH Manager: Test Connection"
+      },
       {
         "command": "easysshManager.refreshConnections",
         "title": "EasySSH Manager: Refresh Connections",
         "icon": "$(refresh)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "easysshManager.addConnection",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.addFolder",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.importSshConfig",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.refreshConnections",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "easysshManager.openSsh",
+          "when": "viewItem == easysshManager.connection",
+          "group": "inline"
+        },
+        {
+          "command": "easysshManager.openSftp",
+          "when": "viewItem == easysshManager.connection",
+          "group": "inline"
+        },
+        {
+          "command": "easysshManager.editConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.duplicateConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.moveItem",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.testConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.deleteConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "2_delete"
+        },
+        {
+          "command": "easysshManager.renameFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.addConnection",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.addFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.moveItem",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.deleteFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "2_delete"
+        }
+      ]
+    },
     "configuration": {
       "title": "EasySSH Manager",
       "properties": {
@@ -168,5 +318,8 @@
     "typescript-eslint": "8.33.0",
     "vitest": "3.2.4",
     "yauzl": "2.10.0"
+  },
+  "dependencies": {
+    "ssh-config": "4.1.0"
   }
 }
