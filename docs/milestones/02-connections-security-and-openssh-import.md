@@ -222,18 +222,18 @@ interface SshImportCandidate {
 
 ## Implementation checklist
 
-- [ ] Define runtime schemas separately from TypeScript interfaces and validate all loaded/written state.
-- [ ] Implement queued atomic state updates, recovery snapshots, pure migrations, and state-change events.
-- [ ] Implement connection/folder repositories and a service enforcing hierarchy, ordering, timestamps, and delete rules.
-- [ ] Implement CredentialStore and transient credential cache ports with rollback/cleanup handling.
-- [ ] Add connection/folder TreeItems, welcome state, inline/context menus, drag controller, keyboard labels, and granular refresh.
-- [ ] Implement the connection editor panel with CSP, nonce scripts, state initialization, dirty-state close warning, validation, and correlation IDs.
-- [ ] Add explicit set/keep/clear secret operations and safe auth-mode transitions.
-- [ ] Implement duplicate and recursive folder-delete workflows with secret handling.
-- [ ] Implement safe default/selected SSH config discovery and guarded include loading.
-- [ ] Implement concrete-alias extraction, effective-option computation, preview issues, key selection, and duplicate policies.
-- [ ] Add import preview webview with no raw source content and no path/action trust delegated to the browser.
-- [ ] Verify import code exposes no write API and source fixtures remain byte-for-byte unchanged.
+- [x] Define runtime schemas separately from TypeScript interfaces and validate all loaded/written state.
+- [x] Implement queued atomic state updates, recovery snapshots, pure migrations, and state-change events.
+- [x] Implement connection/folder repositories and a service enforcing hierarchy, ordering, timestamps, and delete rules.
+- [x] Implement CredentialStore and transient credential cache ports with rollback/cleanup handling.
+- [x] Add connection/folder TreeItems, welcome state, inline/context menus, drag controller, keyboard labels, and granular refresh.
+- [x] Implement the connection editor panel with CSP, nonce scripts, state initialization, dirty-state close warning, validation, and correlation IDs.
+- [x] Add explicit set/keep/clear secret operations and safe auth-mode transitions.
+- [x] Implement duplicate and recursive folder-delete workflows with secret handling.
+- [x] Implement safe default/selected SSH config discovery and guarded include loading.
+- [x] Implement concrete-alias extraction, effective-option computation, preview issues, key selection, and duplicate policies.
+- [x] Add import preview webview with no raw source content and no path/action trust delegated to the browser.
+- [x] Verify import code exposes no write API and source fixtures remain byte-for-byte unchanged.
 
 ## Automated tests
 

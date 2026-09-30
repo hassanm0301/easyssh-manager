@@ -144,19 +144,19 @@ Ports define capabilities without prematurely implementing network behavior. UI 
 
 ## Implementation checklist
 
-- [ ] Initialize npm metadata, exact scripts, lockfile, GPL license, supported OS declaration, repository URL, and `0.1.0` prerelease version.
-- [ ] Pin exact production/dev dependency versions after checking their engine and license compatibility.
-- [ ] Configure strict TypeScript including `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`, and casing consistency.
-- [ ] Configure esbuild development/watch/production modes and externalize `vscode`.
-- [ ] Configure ESLint and Prettier so CI checks without rewriting files.
-- [ ] Add commands for `clean`, `typecheck`, `lint`, `format:check`, `test:unit`, `test:integration`, `test:extension`, `coverage`, `build`, `package`, and `check`.
-- [ ] Contribute the Activity Bar container, TreeView, welcome text, refresh command, configuration schema, and codicon-based icons.
-- [ ] Implement the composition root, reverse-order disposal, logger, configuration validation, command wrapper, and top-level error presentation.
-- [ ] Ensure command execution catches unknown failures, maps them to a correlation id, logs safely, and shows one notification.
-- [ ] Add unit and extension-host fixtures without storing real credentials.
-- [ ] Add a deterministic Docker image/config capable of later password, Ed25519, encrypted-key, host-key rotation, SFTP, permission, and disconnect tests.
-- [ ] Add GitHub Actions jobs for static checks/unit tests and an Xvfb/Docker integration lane.
-- [ ] Package a VSIX and list its contents to prove tests, fixtures, private configs, and local environment files are excluded.
+- [x] Initialize npm metadata, exact scripts, lockfile, GPL license, supported OS declaration, repository URL, and `0.1.0` prerelease version.
+- [x] Pin exact production/dev dependency versions after checking their engine and license compatibility.
+- [x] Configure strict TypeScript including `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`, and casing consistency.
+- [x] Configure esbuild development/watch/production modes and externalize `vscode`.
+- [x] Configure ESLint and Prettier so CI checks without rewriting files.
+- [x] Add commands for `clean`, `typecheck`, `lint`, `format:check`, `test:unit`, `test:integration`, `test:extension`, `coverage`, `build`, `package`, and `check`.
+- [x] Contribute the Activity Bar container, TreeView, welcome text, refresh command, configuration schema, and codicon-based icons.
+- [x] Implement the composition root, reverse-order disposal, logger, configuration validation, command wrapper, and top-level error presentation.
+- [x] Ensure command execution catches unknown failures, maps them to a correlation id, logs safely, and shows one notification.
+- [x] Add unit and extension-host fixtures without storing real credentials.
+- [x] Add a deterministic Docker image/config capable of later password, Ed25519, encrypted-key, host-key rotation, SFTP, permission, and disconnect tests.
+- [x] Add GitHub Actions jobs for static checks/unit tests and an Xvfb/Docker integration lane.
+- [x] Package a VSIX and list its contents to prove tests, fixtures, private configs, and local environment files are excluded.
 
 ## Automated tests
 
