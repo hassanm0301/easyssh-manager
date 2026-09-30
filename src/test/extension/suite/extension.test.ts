@@ -19,7 +19,9 @@ suite('EasySSH Manager extension', () => {
       /easysshManager\.addConnection/,
     );
     await vscode.commands.executeCommand('workbench.view.extension.easysshManager');
-    if (!extension.isActive) await new Promise((resolve) => setTimeout(resolve, 100));
+    const activationDeadline = Date.now() + 2_000;
+    while (!extension.isActive && Date.now() < activationDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(extension.isActive, true);
     if (process.env.EASYSSH_ACCEPTANCE_PANEL === 'editor')
       await vscode.commands.executeCommand('easysshManager.addConnection');

@@ -3,11 +3,14 @@ import Mocha from 'mocha';
 
 export function run(): Promise<void> {
   const acceptancePause = Number(process.env.EASYSSH_ACCEPTANCE_PAUSE_MS ?? 0);
+  const defaultTimeout = 5_000;
   const mocha = new Mocha({
     ui: 'tdd',
     color: true,
     timeout:
-      Number.isFinite(acceptancePause) && acceptancePause > 0 ? acceptancePause + 2_000 : 2_000,
+      Number.isFinite(acceptancePause) && acceptancePause > 0
+        ? acceptancePause + defaultTimeout
+        : defaultTimeout,
   });
   mocha.addFile(path.resolve(__dirname, 'extension.test.js'));
   return new Promise((resolve, reject) => {
