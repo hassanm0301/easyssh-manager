@@ -34,6 +34,42 @@ describe('VsCodeCredentialStore', () => {
     expect(await credentials.getPassword('source')).toBeUndefined();
     expect(await credentials.getKeyPassphrase('source')).toBeUndefined();
   });
+
+  it('attempts both deletions and reports every failed credential cleanup', async () => {
+    const deleted: string[] = [];
+    const credentials = new VsCodeCredentialStore({
+      get: async () => undefined,
+      store: async () => undefined,
+      delete: async (key) => {
+        deleted.push(key);
+        throw new Error(`failed ${key}`);
+      },
+    });
+    await expect(credentials.clearAll('connection')).rejects.toBeInstanceOf(AggregateError);
+    expect(deleted).toEqual([
+      'easysshManager.connection.connection.password',
+      'easysshManager.connection.connection.keyPassphrase',
+    ]);
+  });
+
+  it('restores an overwritten target when a later selected copy fails', async () => {
+    const storage = new SecretStorageFake();
+    await storage.store('easysshManager.connection.source.password', 'source-password');
+    await storage.store('easysshManager.connection.source.keyPassphrase', 'source-phrase');
+    await storage.store('easysshManager.connection.target.password', 'target-password');
+    const originalStore = storage.store.bind(storage);
+    storage.store = async (key, value) => {
+      if (key === 'easysshManager.connection.target.keyPassphrase')
+        throw new Error('passphrase copy failed');
+      await originalStore(key, value);
+    };
+    const credentials = new VsCodeCredentialStore(storage);
+    await expect(
+      credentials.copySelected('source', 'target', ['password', 'keyPassphrase']),
+    ).rejects.toThrow('passphrase copy failed');
+    expect(await credentials.getPassword('target')).toBe('target-password');
+    expect(await credentials.getKeyPassphrase('target')).toBeUndefined();
+  });
 });
 
 describe('InMemorySessionCredentialCache', () => {

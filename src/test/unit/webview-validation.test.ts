@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Script } from 'node:vm';
 
-vi.mock('vscode', () => ({}));
+vi.mock('vscode', () => ({ ViewColumn: { One: 1 } }));
 
 import {
+  ConnectionEditor,
+  editorHtml,
   validateEditorInput,
   validateEditorMessage,
 } from '../../views/connections/ConnectionEditor';
@@ -42,6 +45,85 @@ describe('connection editor runtime validation', () => {
     expect(() => validateEditorMessage({ requestId: '1', type: 'test', privileged: true })).toThrow(
       'Invalid editor operation',
     );
+  });
+
+  it('renders a nonce-only CSP without serializing secret values', () => {
+    const html = editorHtml(
+      {} as never,
+      'fixed-nonce',
+      {
+        id: 'connection',
+        ...baseInput,
+        authentication: { type: 'password', hasStoredPassword: true },
+        order: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      [],
+    );
+    expect(html).toContain(
+      "default-src 'none'; style-src 'nonce-fixed-nonce'; script-src 'nonce-fixed-nonce'",
+    );
+    expect(html).toContain('hasStoredPassword');
+    expect(html).not.toContain('SENTINEL_PASSWORD');
+    expect(html).toContain('beforeunload');
+    expect(html).toContain('[hidden]{display:none!important}');
+    expect(html).toContain('input[type=checkbox]{display:inline;width:auto}');
+    expect(html).toContain('var(--vscode-input-background)');
+    const script = /<script nonce="fixed-nonce">([\s\S]*)<\/script>/.exec(html)?.[1];
+    expect(script).toBeDefined();
+    if (script === undefined) throw new Error('Editor script was not generated.');
+    expect(() => new Script(script)).not.toThrow();
+  });
+
+  it('does not clear an obsolete secret before metadata validation succeeds', async () => {
+    let receive!: (message: unknown) => Promise<void>;
+    const panel = {
+      webview: {
+        html: '',
+        onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
+          receive = listener;
+          return { dispose: () => undefined };
+        },
+        postMessage: vi.fn(async () => true),
+      },
+      onDidDispose: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    };
+    const changeCredential = vi.fn(async () => undefined);
+    const editor = new ConnectionEditor(
+      {
+        window: { createWebviewPanel: () => panel },
+        ViewColumn: { One: 1 },
+      } as never,
+      {
+        editConnection: vi.fn(async () => {
+          throw new Error('metadata rejected');
+        }),
+        changeCredential,
+      } as never,
+    );
+    editor.open({
+      id: 'connection',
+      ...baseInput,
+      authentication: { type: 'password', hasStoredPassword: true },
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await receive({
+      requestId: '1',
+      type: 'save',
+      value: baseInput,
+      password: { action: 'clear' },
+      passphrase: { action: 'keep' },
+    });
+    expect(changeCredential).not.toHaveBeenCalled();
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      requestId: '1',
+      ok: false,
+      error: 'Unable to save connection.',
+    });
   });
 });
 
