@@ -14,6 +14,8 @@ describe('OpenSSH integration fixture', () => {
     expect(dockerText).toContain('FROM ubuntu:24.04');
     expect(dockerText).not.toMatch(/COPY\s+.*\.(?:pem|key)/i);
     expect(configText).toMatch(/^Port 2222$/m);
+    expect(configText).toMatch(/^PasswordAuthentication yes$/m);
+    expect(configText).toMatch(/^KbdInteractiveAuthentication no$/m);
     expect(configText).toMatch(/^PubkeyAuthentication yes$/m);
     expect(configText).toMatch(/^Subsystem sftp internal-sftp$/m);
     expect(configText).toMatch(/^PermitRootLogin no$/m);

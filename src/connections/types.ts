@@ -29,7 +29,11 @@ export interface RemoteConnection {
   authentication: Authentication;
   importedFromSshConfig?: { sourcePath: string; hostPattern: string };
   agentAccess: AgentAccessPolicy;
-  options: { keepAliveIntervalMs?: number; readyTimeoutMs?: number };
+  options: {
+    keepAliveIntervalMs?: number;
+    keepAliveCountMax?: number;
+    readyTimeoutMs?: number;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -44,11 +48,11 @@ export interface ConnectionFolder {
 }
 
 export interface TrustedHostKey {
-  host: string;
-  port: number;
+  hostIdentity: string;
   algorithm: string;
-  fingerprint: string;
-  addedAt: number;
+  sha256Fingerprint: string;
+  firstTrustedAt: number;
+  lastSeenAt: number;
 }
 
 export interface UiPreferences {

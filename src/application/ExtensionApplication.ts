@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomUUID } from 'node:crypto';
 
 import { CommandRegistry } from '../commands/CommandRegistry';
 import { DisposableStore } from '../common/disposables';
@@ -12,6 +13,14 @@ import {
 import { OpenSshImporter } from '../connections/OpenSshImporter';
 import { VsCodeStateRepository } from '../connections/StateRepository';
 import { VsCodeConfigurationService } from '../configuration/ConfigurationService';
+import { StateConnectionResolver } from '../ssh/ConnectionResolver';
+import { DefaultCredentialResolver } from '../ssh/CredentialResolver';
+import { HostKeyVerifier } from '../ssh/HostKeyVerifier';
+import { SshClientFactory } from '../ssh/SshClientFactory';
+import { DefaultSshSessionManager } from '../ssh/SshSessionManager';
+import { SshTerminalRegistry } from '../ssh/SshTerminalSession';
+import { TestConnectionService } from '../ssh/TestConnectionService';
+import { VsCodeHostTrustPrompt } from '../ssh/VsCodeHostTrustPrompt';
 import { ConnectionEditor } from '../views/connections/ConnectionEditor';
 import { ImportPreview, type ImportSelection } from '../views/connections/ImportPreview';
 import {
@@ -31,6 +40,9 @@ export class ExtensionApplication implements vscode.Disposable {
   private readonly connections: ConnectionService;
   private readonly editor: ConnectionEditor;
   private readonly importPreview: ImportPreview;
+  private readonly sshSessions: DefaultSshSessionManager;
+  private readonly terminals: SshTerminalRegistry;
+  private readonly connectionTester: TestConnectionService;
 
   constructor(
     private readonly vscodeApi: typeof vscode,
@@ -45,14 +57,28 @@ export class ExtensionApplication implements vscode.Disposable {
         error: (message) => vscodeApi.window.showErrorMessage(message),
       }),
     );
+    const credentialStore = new VsCodeCredentialStore(context.secrets);
     this.connections = new ConnectionService(
       this.state,
-      new VsCodeCredentialStore(context.secrets),
+      credentialStore,
       undefined,
       undefined,
       new VsCodeCredentialCleanupQueue(context.globalState),
     );
-    this.editor = this.disposables.add(new ConnectionEditor(vscodeApi, this.connections));
+    const connectionResolver = new StateConnectionResolver(this.state);
+    const credentialResolver = new DefaultCredentialResolver(credentialStore, vscodeApi.window);
+    const hostKeys = new HostKeyVerifier(this.state, new VsCodeHostTrustPrompt(vscodeApi));
+    const clients = new SshClientFactory(hostKeys, () => this.configuration.getSnapshot());
+    this.sshSessions = this.disposables.add(
+      new DefaultSshSessionManager(connectionResolver, credentialResolver, clients),
+    );
+    this.terminals = this.disposables.add(
+      new SshTerminalRegistry(vscodeApi, this.sshSessions, this.logger),
+    );
+    this.connectionTester = new TestConnectionService(this.sshSessions, connectionResolver);
+    this.editor = this.disposables.add(
+      new ConnectionEditor(vscodeApi, this.connections, this.connectionTester),
+    );
     this.importPreview = this.disposables.add(new ImportPreview(vscodeApi));
     this.treeProvider = this.disposables.add(
       new ConnectionsTreeProvider(this.state, (id, folderId, beforeId) =>
@@ -277,20 +303,35 @@ export class ExtensionApplication implements vscode.Disposable {
         });
       },
     });
-    for (const id of [
-      'easysshManager.openSsh',
-      'easysshManager.testConnection',
-      'easysshManager.openSftp',
-    ] as const) {
-      this.commands.register({
-        id,
-        execute: async () => {
-          void this.vscodeApi.window.showInformationMessage(
-            'This action is available after the SSH/SFTP transport milestone.',
-          );
-        },
-      });
-    }
+    this.commands.register({
+      id: 'easysshManager.openSsh',
+      execute: async (item: unknown) => {
+        const connectionId = selectedId(item, ConnectionNode);
+        const connection = (await this.state.load()).connections.find(
+          (candidate) => candidate.id === connectionId,
+        );
+        if (!connection) throw new EasySshError('NOT_FOUND', 'Connection was not found.');
+        this.terminals.open(connection.id, connection.name);
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.testConnection',
+      execute: async (item: unknown) => {
+        const connectionId = selectedId(item, ConnectionNode);
+        const result = await this.connectionTester.testSaved(connectionId, randomUUID());
+        void this.vscodeApi.window.showInformationMessage(
+          `Connection test succeeded: ${result.stages.join(' · ')} · ${result.durationMs} ms`,
+        );
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.openSftp',
+      execute: async () => {
+        void this.vscodeApi.window.showInformationMessage(
+          'The SFTP browser is available after the SFTP filesystem milestone.',
+        );
+      },
+    });
     await this.connections.retryCredentialCleanup();
     await this.connections.reconcileCredentialHints();
     this.logger.info('EasySSH Manager activated', { operation: 'activation' });

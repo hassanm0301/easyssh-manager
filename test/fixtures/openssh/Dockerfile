@@ -8,6 +8,8 @@ RUN apt-get update \
     && ssh-keygen -A
 
 COPY sshd_config /etc/ssh/sshd_config
+COPY entrypoint.sh /usr/local/bin/easyssh-fixture
+RUN chmod 0755 /usr/local/bin/easyssh-fixture
 
 EXPOSE 2222
-CMD ["/usr/sbin/sshd", "-D", "-e"]
+CMD ["/usr/local/bin/easyssh-fixture"]

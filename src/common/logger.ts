@@ -22,6 +22,8 @@ const allowedKeys = new Set([
   'status',
   'attempt',
   'durationMs',
+  'activeSessions',
+  'activeConnections',
 ]);
 
 export interface OutputChannel {

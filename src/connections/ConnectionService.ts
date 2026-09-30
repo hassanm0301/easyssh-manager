@@ -470,7 +470,7 @@ export class ConnectionService {
   }
 }
 
-function makeConnection(
+export function makeConnection(
   id: string,
   input: ConnectionInput,
   order: number,
@@ -598,6 +598,13 @@ function validOptions(value: RemoteConnection['options']): RemoteConnection['opt
       0,
       300_000,
       'Keepalive interval',
+    );
+  if (value.keepAliveCountMax !== undefined)
+    result.keepAliveCountMax = validInteger(
+      value.keepAliveCountMax,
+      1,
+      20,
+      'Keepalive retry count',
     );
   if (value.readyTimeoutMs !== undefined)
     result.readyTimeoutMs = validInteger(value.readyTimeoutMs, 1_000, 120_000, 'Ready timeout');
