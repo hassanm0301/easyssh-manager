@@ -89,7 +89,7 @@ export class ExtensionApplication implements vscode.Disposable {
   }
 
   async activate(): Promise<void> {
-    this.disposables.add(this.state.onDidChange(() => this.treeProvider.refresh()));
+    this.disposables.add(this.state.onDidChange((change) => this.treeProvider.refresh(change)));
     this.commands.register({
       id: 'easysshManager.refreshConnections',
       execute: async () => {

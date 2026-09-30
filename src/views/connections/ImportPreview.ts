@@ -134,6 +134,19 @@ function validateMessage(
 }
 
 function previewHtml(
+  webview: vscode.Webview,
+  nonce: string,
+  candidates: readonly SshImportCandidate[],
+  folders: readonly ConnectionFolder[],
+): string {
+  const themeStyles = `[hidden]{display:none!important}body{width:auto;box-sizing:border-box;color:var(--vscode-foreground);background:var(--vscode-editor-background);font-family:var(--vscode-font-family)}.candidate{box-sizing:border-box;max-width:100%}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}input[type=text],select{padding:.35rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent)}button{padding:.35rem .7rem;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0}button:hover{background:var(--vscode-button-hoverBackground)}`;
+  return renderPreviewHtml(webview, nonce, candidates, folders).replace(
+    '</style>',
+    `${themeStyles}</style>`,
+  );
+}
+
+function renderPreviewHtml(
   _webview: vscode.Webview,
   nonce: string,
   candidates: readonly SshImportCandidate[],
