@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { OpenSshImporter } from '../../connections/OpenSshImporter';
+import type { ImportFileSystem } from '../../connections/OpenSshImporter';
 
 const temporaryDirectories: string[] = [];
 
@@ -102,4 +103,104 @@ describe('OpenSshImporter', () => {
       ).discover(),
     ).rejects.toThrow('not valid UTF-8');
   });
+
+  it('contains canonical include loops and enforces depth and file-count limits', async () => {
+    const loopFiles = new MemoryFiles({
+      '/config': 'Host loop\n  Include alias\n',
+      '/alias': '',
+    });
+    loopFiles.canonical.set('/alias', '/config');
+    const loop = await new OpenSshImporter(
+      loopFiles,
+      () => '/home',
+      () => 'user',
+    ).discover('/config');
+    expect(loop[0]?.blockingIssues).toContainEqual(
+      expect.objectContaining({ code: 'INCLUDE_LOOP' }),
+    );
+
+    const depthEntries: Record<string, string> = {
+      '/config': 'Host deep\n  Include f1\n',
+    };
+    for (let index = 1; index <= 17; index += 1)
+      depthEntries[`/f${index}`] = index === 17 ? '' : `Include f${index + 1}\n`;
+    const depth = await new OpenSshImporter(
+      new MemoryFiles(depthEntries),
+      () => '/home',
+      () => 'user',
+    ).discover('/config');
+    expect(depth[0]?.blockingIssues).toContainEqual(
+      expect.objectContaining({ code: 'INCLUDE_DEPTH' }),
+    );
+
+    const countEntries: Record<string, string> = {
+      '/config': 'Host many\n  Include parts/*.conf\n',
+    };
+    for (let index = 0; index < 256; index += 1)
+      countEntries[`/parts/${String(index).padStart(3, '0')}.conf`] = '';
+    const count = await new OpenSshImporter(
+      new MemoryFiles(countEntries),
+      () => '/home',
+      () => 'user',
+    ).discover('/config');
+    expect(count[0]?.blockingIssues).toContainEqual(
+      expect.objectContaining({ code: 'INCLUDE_FILES' }),
+    );
+  });
+
+  it('enforces the aggregate byte limit and blocks unsupported tokens', async () => {
+    const oversized = new MemoryFiles({
+      '/config': `Host large\n#${'x'.repeat(8 * 1024 * 1024)}\n`,
+    });
+    await expect(
+      new OpenSshImporter(
+        oversized,
+        () => '/home',
+        () => 'user',
+      ).discover('/config'),
+    ).rejects.toThrow('safe 8 MiB limit');
+
+    const tokens = new MemoryFiles({
+      '/config': 'Host token\n  HostName %x.example\n  IdentityFile %d/.ssh/%n\n',
+    });
+    const candidates = await new OpenSshImporter(
+      tokens,
+      () => '/home/user',
+      () => 'local',
+    ).discover('/config');
+    expect(candidates[0]?.blockingIssues).toContainEqual(
+      expect.objectContaining({ code: 'UNSUPPORTED_TOKEN' }),
+    );
+  });
 });
+
+class MemoryFiles implements ImportFileSystem {
+  readonly canonical = new Map<string, string>();
+  private readonly values = new Map<string, Uint8Array>();
+
+  constructor(entries: Record<string, string>) {
+    for (const [file, value] of Object.entries(entries)) {
+      this.values.set(file, new TextEncoder().encode(value));
+      this.canonical.set(file, file);
+    }
+  }
+
+  async readFile(file: string): Promise<Uint8Array> {
+    const value = this.values.get(file);
+    if (!value) throw new Error('missing');
+    return value;
+  }
+
+  async realpath(file: string): Promise<string> {
+    const canonical = this.canonical.get(file);
+    if (!canonical) throw new Error('missing');
+    return canonical;
+  }
+
+  async readdir(directory: string): Promise<string[]> {
+    const prefix = `${directory.replace(/\/$/, '')}/`;
+    return [...this.values.keys()]
+      .filter((file) => file.startsWith(prefix) && !file.slice(prefix.length).includes('/'))
+      .map((file) => file.slice(prefix.length));
+  }
+}

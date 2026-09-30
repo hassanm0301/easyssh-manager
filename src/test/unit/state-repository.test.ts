@@ -55,6 +55,39 @@ describe('VsCodeStateRepository', () => {
     expect(storage.values.get(STATE_KEY)).toEqual(emptyPersistedState());
   });
 
+  it('reloads current state as an isolated copy and emits only after persistence succeeds', async () => {
+    const initial = emptyPersistedState();
+    initial.folders.push({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'saved',
+      parentId: null,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    storage.values.set(STATE_KEY, initial);
+    const repository = new VsCodeStateRepository(storage);
+    const loaded = await repository.load();
+    expect(() => {
+      loaded.folders[0]!.name = 'caller mutation';
+    }).toThrow();
+    expect((await repository.load()).folders[0]?.name).toBe('saved');
+
+    const changes = vi.fn();
+    repository.onDidChange(changes);
+    await repository.update((draft) => {
+      draft.folders[0]!.name = 'committed';
+    });
+    expect(storage.values.get(STATE_KEY)).toMatchObject({
+      folders: [expect.objectContaining({ name: 'committed' })],
+    });
+    expect(changes).toHaveBeenCalledOnce();
+    expect(changes.mock.calls[0]?.[0]).toMatchObject({
+      previous: { folders: [expect.objectContaining({ name: 'saved' })] },
+      current: { folders: [expect.objectContaining({ name: 'committed' })] },
+    });
+  });
+
   it('serializes concurrent updates without losing either mutation', async () => {
     const repository = new VsCodeStateRepository(storage);
     const firstId = '11111111-1111-4111-8111-111111111111';
