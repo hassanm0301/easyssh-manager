@@ -295,8 +295,9 @@
     "build:development": "node scripts/build.mjs --development",
     "build:production": "node scripts/build.mjs --production",
     "watch": "node scripts/build.mjs --development --watch",
-    "package:dev": "npm run build:development && vsce package --no-dependencies --pre-release --out artifacts/easyssh-manager-dev.vsix && npm run inspect:vsix -- artifacts/easyssh-manager-dev.vsix",
-    "package": "npm run build:production && vsce package --no-dependencies --out artifacts/easyssh-manager.vsix && npm run inspect:vsix -- artifacts/easyssh-manager.vsix",
+    "prepare:artifacts": "node -e \"require('node:fs').mkdirSync('artifacts', { recursive: true })\"",
+    "package:dev": "npm run build:development && npm run prepare:artifacts && vsce package --no-dependencies --pre-release --out artifacts/easyssh-manager-dev.vsix && npm run inspect:vsix -- artifacts/easyssh-manager-dev.vsix",
+    "package": "npm run build:production && npm run prepare:artifacts && vsce package --no-dependencies --out artifacts/easyssh-manager.vsix && npm run inspect:vsix -- artifacts/easyssh-manager.vsix",
     "inspect:vsix": "node scripts/inspect-vsix.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm run test:integration && npm run build:production"
   },
