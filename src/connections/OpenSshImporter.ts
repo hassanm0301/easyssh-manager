@@ -217,7 +217,7 @@ export class OpenSshImporter {
     return aliases.map((alias) => {
       // ssh-config 4.x never evaluates Match/exec. Calling compute still exercises its reviewed
       // first-value implementation; the safe subset below adds stricter Match and token handling.
-      parsed.compute(alias);
+      parsed.compute(alias, { matchExec: false });
       return this.compute(alias, sections, sourcePath, includeIssues);
     });
   }
