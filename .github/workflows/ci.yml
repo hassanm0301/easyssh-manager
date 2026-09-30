@@ -42,4 +42,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t easyssh-manager-fixture test/fixtures/openssh
       - run: docker run --rm -d --name easyssh-manager-fixture -p 2222:2222 easyssh-manager-fixture
-      - run: docker exec easyssh-manager-fixture /usr/sbin/sshd -T
+      - name: Wait for OpenSSH fixture
+        run: |
+          for attempt in {1..50}; do
+            if docker exec easyssh-manager-fixture /usr/sbin/sshd -T >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          docker logs easyssh-manager-fixture
+          exit 1
