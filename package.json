@@ -1,0 +1,328 @@
+{
+  "name": "easyssh-manager",
+  "displayName": "EasySSH Manager",
+  "description": "Manage SSH and SFTP connections from the local desktop extension host.",
+  "version": "0.1.0",
+  "publisher": "hassanm0301",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hassanm0301/easyssh-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hassanm0301/easyssh-manager/issues"
+  },
+  "homepage": "https://github.com/hassanm0301/easyssh-manager#readme",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ssh",
+    "sftp",
+    "remote"
+  ],
+  "os": [
+    "linux"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:easysshManager.connections",
+    "onCommand:easysshManager.addConnection",
+    "onCommand:easysshManager.addFolder",
+    "onCommand:easysshManager.editConnection",
+    "onCommand:easysshManager.duplicateConnection",
+    "onCommand:easysshManager.deleteConnection",
+    "onCommand:easysshManager.renameFolder",
+    "onCommand:easysshManager.moveItem",
+    "onCommand:easysshManager.deleteFolder",
+    "onCommand:easysshManager.importSshConfig",
+    "onCommand:easysshManager.openSsh",
+    "onCommand:easysshManager.openSftp",
+    "onCommand:easysshManager.testConnection",
+    "onCommand:easysshManager.refreshConnections",
+    "onFileSystem:remote-sftp"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Connection management and direct remote access are available. Workspace uploads remain disabled until the workspace is trusted."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "easysshManager",
+          "title": "EasySSH Manager",
+          "icon": "$(server)"
+        }
+      ]
+    },
+    "views": {
+      "easysshManager": [
+        {
+          "id": "easysshManager.connections",
+          "name": "Connections"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "easysshManager.connections",
+        "contents": "No connections yet.\n[Add Connection](command:easysshManager.addConnection) · [Add Folder](command:easysshManager.addFolder)\n[Import OpenSSH Config](command:easysshManager.importSshConfig)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "easysshManager.addConnection",
+        "title": "EasySSH Manager: Add Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "easysshManager.addFolder",
+        "title": "EasySSH Manager: Add Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "easysshManager.editConnection",
+        "title": "EasySSH Manager: Edit Connection"
+      },
+      {
+        "command": "easysshManager.duplicateConnection",
+        "title": "EasySSH Manager: Duplicate Connection"
+      },
+      {
+        "command": "easysshManager.deleteConnection",
+        "title": "EasySSH Manager: Delete Connection"
+      },
+      {
+        "command": "easysshManager.renameFolder",
+        "title": "EasySSH Manager: Rename Folder"
+      },
+      {
+        "command": "easysshManager.moveItem",
+        "title": "EasySSH Manager: Move Item"
+      },
+      {
+        "command": "easysshManager.deleteFolder",
+        "title": "EasySSH Manager: Delete Folder"
+      },
+      {
+        "command": "easysshManager.importSshConfig",
+        "title": "EasySSH Manager: Import OpenSSH Config"
+      },
+      {
+        "command": "easysshManager.openSsh",
+        "title": "EasySSH Manager: Open SSH",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "easysshManager.openSftp",
+        "title": "EasySSH Manager: Open SFTP",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "easysshManager.testConnection",
+        "title": "EasySSH Manager: Test Connection"
+      },
+      {
+        "command": "easysshManager.refreshConnections",
+        "title": "EasySSH Manager: Refresh Connections",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "easysshManager.addConnection",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.addFolder",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.importSshConfig",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.refreshConnections",
+          "when": "view == easysshManager.connections",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "easysshManager.openSsh",
+          "when": "viewItem == easysshManager.connection",
+          "group": "inline"
+        },
+        {
+          "command": "easysshManager.openSftp",
+          "when": "viewItem == easysshManager.connection",
+          "group": "inline"
+        },
+        {
+          "command": "easysshManager.editConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.duplicateConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.moveItem",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.testConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.deleteConnection",
+          "when": "viewItem == easysshManager.connection",
+          "group": "2_delete"
+        },
+        {
+          "command": "easysshManager.renameFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.addConnection",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.addFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.moveItem",
+          "when": "viewItem == easysshManager.folder",
+          "group": "1_manage"
+        },
+        {
+          "command": "easysshManager.deleteFolder",
+          "when": "viewItem == easysshManager.folder",
+          "group": "2_delete"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "EasySSH Manager",
+      "properties": {
+        "easysshManager.connectTimeoutMs": {
+          "type": "integer",
+          "default": 15000,
+          "minimum": 1000,
+          "maximum": 120000,
+          "description": "Connection timeout in milliseconds."
+        },
+        "easysshManager.keepAliveIntervalMs": {
+          "type": "integer",
+          "default": 15000,
+          "minimum": 0,
+          "maximum": 300000,
+          "description": "SSH keepalive interval in milliseconds. Set to 0 to disable."
+        },
+        "easysshManager.keepAliveCountMax": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum unanswered SSH keepalives."
+        },
+        "easysshManager.sftpIdleTimeoutMs": {
+          "type": "integer",
+          "default": 180000,
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "Idle SFTP session timeout in milliseconds."
+        },
+        "easysshManager.maxInlineFileSizeMiB": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 1024,
+          "description": "Maximum remote file size opened inline, in MiB."
+        },
+        "easysshManager.maxBufferedTransferMiB": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "maximum": 2048,
+          "description": "Maximum buffered transfer size, in MiB."
+        },
+        "easysshManager.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
+          "description": "Minimum log level written to the EasySSH Manager output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rimraf dist coverage artifacts/*.vsix",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "format:check": "prettier --check .",
+    "test:unit": "vitest run src/test/unit",
+    "test:integration": "vitest run src/test/integration",
+    "test:extension": "npm run build && env -u ELECTRON_RUN_AS_NODE tsx src/test/extension/runTest.ts",
+    "coverage": "vitest run --coverage",
+    "build": "npm run build:production",
+    "build:development": "node scripts/build.mjs --development",
+    "build:production": "node scripts/build.mjs --production",
+    "watch": "node scripts/build.mjs --development --watch",
+    "prepare:artifacts": "node -e \"require('node:fs').mkdirSync('artifacts', { recursive: true })\"",
+    "package:dev": "npm run build:development && npm run prepare:artifacts && vsce package --no-dependencies --pre-release --out artifacts/easyssh-manager-dev.vsix && npm run inspect:vsix -- artifacts/easyssh-manager-dev.vsix",
+    "package": "npm run build:production && npm run prepare:artifacts && vsce package --no-dependencies --out artifacts/easyssh-manager.vsix && npm run inspect:vsix -- artifacts/easyssh-manager.vsix",
+    "inspect:vsix": "node scripts/inspect-vsix.mjs",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm run test:integration && npm run build:production"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.15.3",
+    "@types/ssh2": "1.15.5",
+    "@types/vscode": "1.103.0",
+    "@vitest/coverage-v8": "3.2.4",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "3.6.2",
+    "eslint": "9.28.0",
+    "eslint-config-prettier": "10.1.5",
+    "globals": "16.2.0",
+    "mocha": "11.7.0",
+    "prettier": "3.5.3",
+    "rimraf": "6.0.1",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.33.0",
+    "vitest": "3.2.4",
+    "yauzl": "2.10.0"
+  },
+  "dependencies": {
+    "ssh-config": "4.1.0",
+    "ssh2": "1.17.0"
+  }
+}

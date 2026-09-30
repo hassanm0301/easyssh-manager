@@ -1,0 +1,7 @@
+dist
+coverage
+artifacts
+package-lock.json
+docs
+README.md
+LICENSE
