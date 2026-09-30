@@ -1,15 +1,16 @@
 # EasySSH Manager
 
-EasySSH Manager is a Linux desktop extension for VSCodium and VS Code that will
-bring SSH and SFTP connection management into the editor. It runs in the local
-UI extension host so future credentials, private keys, SSH agent access, and
-connection state remain on the user's machine, including when a remote
-workspace is open.
+EasySSH Manager is a Linux desktop extension for VSCodium and VS Code that
+brings SSH connection management and integrated remote terminals into the
+editor. It runs in the local UI extension host so credentials, private keys,
+SSH agent access, host trust, and connection state remain on the user's
+machine, including when a remote workspace is open.
 
 ## Implemented features
 
-The current release provides the extension foundation and local connection
-management. It intentionally does not establish SSH or SFTP connections yet.
+The current release provides local connection management and secure SSH
+terminals. SFTP is used by **Test Connection** to validate the configured
+remote path; browsing and editing arrive in a later milestone.
 
 - Native **EasySSH Manager** Activity Bar container with an ordered, nested,
   drag-and-drop **Connections** TreeView and complete connection/folder menus.
@@ -34,15 +35,23 @@ management. It intentionally does not establish SSH or SFTP connections yet.
   an extension-host test harness.
 - Development and production VSIX packaging with an archive-content safety
   check.
-- Docker OpenSSH fixture skeleton and Linux GitHub Actions checks for future
-  SSH/SFTP integration testing.
+- Docker OpenSSH fixture and Linux integration-test entry point for SSH/SFTP
+  transport validation.
+- Password, single-key, encrypted-key, and Linux SSH-agent authentication with
+  no implicit credential fallback.
+- Extension-owned trust-on-first-use host-key verification, persisted SHA-256
+  fingerprints, and blocking changed-key confirmation.
+- Independent integrated SSH pseudoterminals with input buffering, Unicode and
+  ANSI passthrough, PTY resize, keepalives, bounded connection timeouts, and
+  deterministic cleanup.
+- Saved and unsaved **Test Connection** flows that authenticate, open SFTP,
+  resolve and list the configured default path, and report stage latency.
 
 ## Current scope
 
-SSH terminals, host trust, SFTP browsing, remote editing, transfers, and MCP
-access are planned for subsequent milestones. Connection actions remain clear
-placeholders until their transport milestones. The extension performs no
-network connection and includes no telemetry or background service.
+SFTP browsing, remote editing, transfers, and MCP access are planned for
+subsequent milestones. The extension includes no telemetry or background
+service and never consults or writes OpenSSH `known_hosts`.
 
 ## License
 

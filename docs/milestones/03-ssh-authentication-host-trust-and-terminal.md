@@ -138,16 +138,16 @@ Map library events/codes into stable failures: DNS/unreachable, timeout, host mi
 
 ## Implementation checklist
 
-- [ ] Add typed Promise adapters around `ssh2` connection, shell, exec, and SFTP callbacks with exactly-once settlement.
-- [ ] Implement credential leases for stored and transient password/passphrase/key/agent material.
-- [ ] Implement host identity normalization, SHA-256 fingerprinting, serialized TOFU prompts, trust replacement, and state persistence.
-- [ ] Implement SshClientFactory with exact auth-mode configs, timeout/keepalive settings, cancellation, and safe diagnostics.
-- [ ] Implement SshSessionManager registry and idempotent reverse-order cleanup.
-- [ ] Replace connection TreeView Open SSH/Test placeholders with real commands.
-- [ ] Wire saved and unsaved connection-editor Test Connection paths without persisting form secrets prematurely.
-- [ ] Implement the pseudoterminal bridge, buffered pre-open input, resize, status output, and all close directions.
-- [ ] Add session counts to debug diagnostics without exposing stream data.
-- [ ] Ensure application deactivation closes terminals/channels/clients, releases credential leases, and waits only for a bounded shutdown period.
+- [x] Add typed Promise adapters around `ssh2` connection, shell, exec, and SFTP callbacks with exactly-once settlement.
+- [x] Implement credential leases for stored and transient password/passphrase/key/agent material.
+- [x] Implement host identity normalization, SHA-256 fingerprinting, serialized TOFU prompts, trust replacement, and state persistence.
+- [x] Implement SshClientFactory with exact auth-mode configs, timeout/keepalive settings, cancellation, and safe diagnostics.
+- [x] Implement SshSessionManager registry and idempotent reverse-order cleanup.
+- [x] Replace connection TreeView Open SSH/Test placeholders with real commands.
+- [x] Wire saved and unsaved connection-editor Test Connection paths without persisting form secrets prematurely.
+- [x] Implement the pseudoterminal bridge, buffered pre-open input, resize, status output, and all close directions.
+- [x] Add session counts to debug diagnostics without exposing stream data.
+- [x] Ensure application deactivation closes terminals/channels/clients, releases credential leases, and waits only for a bounded shutdown period.
 
 ## Automated tests
 

@@ -1,7 +1,7 @@
 Port 2222
 Protocol 2
 UsePAM no
-PasswordAuthentication no
+PasswordAuthentication yes
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 PermitRootLogin no

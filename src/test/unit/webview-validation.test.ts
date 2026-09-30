@@ -32,6 +32,15 @@ describe('connection editor runtime validation', () => {
     );
   });
 
+  it('validates per-profile keepalive retry overrides', () => {
+    expect(
+      validateEditorInput({ ...baseInput, options: { keepAliveCountMax: 2 } }).options,
+    ).toEqual({ keepAliveCountMax: 2 });
+    expect(() => validateEditorInput({ ...baseInput, options: { keepAliveCountMax: 0 } })).toThrow(
+      'Keepalive retry count must be between 1 and 20',
+    );
+  });
+
   it('requires exact correlated operations and non-empty replacement secrets', () => {
     expect(() =>
       validateEditorMessage({

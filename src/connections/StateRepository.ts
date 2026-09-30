@@ -294,13 +294,42 @@ function validateAgentAccess(value: unknown) {
 
 function validateHostKey(value: unknown) {
   if (!isPlainObject(value)) invalid('host key');
-  exactKeys(value, ['host', 'port', 'algorithm', 'fingerprint', 'addedAt'], 'host key fields');
+  // Milestone 02 briefly emitted the legacy shape. Canonicalize it on load without
+  // changing the envelope version because no released schema consumed host keys.
+  if (
+    Object.keys(value).every((key) =>
+      ['host', 'port', 'algorithm', 'fingerprint', 'addedAt'].includes(key),
+    ) &&
+    typeof value.host === 'string' &&
+    typeof value.port === 'number'
+  ) {
+    const addedAt = nonNegativeInteger(value.addedAt, 'host key addedAt');
+    const fingerprint = nonEmpty(value.fingerprint, 'host key fingerprint', 1024);
+    if (!/^SHA256:[A-Za-z\d+/]{43}$/.test(fingerprint)) invalid('host key fingerprint');
+    return {
+      hostIdentity: `${value.host.toLowerCase()}:${integer(value.port, 'host key port', 1, 65535)}`,
+      algorithm: nonEmpty(value.algorithm, 'host key algorithm', 100),
+      sha256Fingerprint: fingerprint,
+      firstTrustedAt: addedAt,
+      lastSeenAt: addedAt,
+    };
+  }
+  exactKeys(
+    value,
+    ['hostIdentity', 'algorithm', 'sha256Fingerprint', 'firstTrustedAt', 'lastSeenAt'],
+    'host key fields',
+  );
+  const fingerprint = nonEmpty(value.sha256Fingerprint, 'host key fingerprint', 1024);
+  if (!/^SHA256:[A-Za-z\d+/]{43}$/.test(fingerprint)) invalid('host key fingerprint');
+  const firstTrustedAt = nonNegativeInteger(value.firstTrustedAt, 'host key firstTrustedAt');
+  const lastSeenAt = nonNegativeInteger(value.lastSeenAt, 'host key lastSeenAt');
+  if (lastSeenAt < firstTrustedAt) invalid('host key timestamps');
   return {
-    host: nonEmpty(value.host, 'host key host', 1024),
-    port: integer(value.port, 'host key port', 1, 65535),
+    hostIdentity: nonEmpty(value.hostIdentity, 'host identity', 1100),
     algorithm: nonEmpty(value.algorithm, 'host key algorithm', 100),
-    fingerprint: nonEmpty(value.fingerprint, 'host key fingerprint', 1024),
-    addedAt: nonNegativeInteger(value.addedAt, 'host key addedAt'),
+    sha256Fingerprint: fingerprint,
+    firstTrustedAt,
+    lastSeenAt,
   };
 }
 
@@ -359,7 +388,11 @@ function validateHierarchy(connections: RemoteConnection[], folders: ConnectionF
 }
 
 function validatedOptions(options: Record<string, unknown>): RemoteConnection['options'] {
-  exactKeys(options, ['keepAliveIntervalMs', 'readyTimeoutMs'], 'connection option fields');
+  exactKeys(
+    options,
+    ['keepAliveIntervalMs', 'keepAliveCountMax', 'readyTimeoutMs'],
+    'connection option fields',
+  );
   const keepAliveIntervalMs = optionalInteger(
     options.keepAliveIntervalMs,
     'keepAliveIntervalMs',
@@ -367,8 +400,10 @@ function validatedOptions(options: Record<string, unknown>): RemoteConnection['o
     300000,
   );
   const readyTimeoutMs = optionalInteger(options.readyTimeoutMs, 'readyTimeoutMs', 1000, 120000);
+  const keepAliveCountMax = optionalInteger(options.keepAliveCountMax, 'keepAliveCountMax', 1, 20);
   return {
     ...(keepAliveIntervalMs === undefined ? {} : { keepAliveIntervalMs }),
+    ...(keepAliveCountMax === undefined ? {} : { keepAliveCountMax }),
     ...(readyTimeoutMs === undefined ? {} : { readyTimeoutMs }),
   };
 }
