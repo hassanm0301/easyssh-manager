@@ -7,13 +7,23 @@ const watch = process.argv.includes('--watch');
 const production = process.argv.includes('--production');
 const outdir = resolve(root, 'dist');
 
+const sshCryptoStubPlugin = {
+  name: 'ssh2-native-crypto-stub',
+  setup(build) {
+    build.onResolve({ filter: /^\.\/crypto\/build\/Release\/sshcrypto\.node$/ }, () => ({
+      path: resolve(root, 'src/ssh/sshCryptoStub.ts'),
+    }));
+  },
+};
+
 const base = {
   bundle: true,
   alias: {
     // ssh2 treats this native accelerator as optional. A deterministic stub
-    // keeps the VSIX portable and lets ssh2 use its built-in JS/Node crypto path.
+    // keeps the VSIX portable and selects ssh2's built-in JS fallback.
     'cpu-features': resolve(root, 'src/ssh/cpuFeaturesStub.ts'),
   },
+  plugins: [sshCryptoStubPlugin],
   sourcemap: production ? false : 'inline',
   minify: production,
   legalComments: 'none',
