@@ -233,19 +233,101 @@ interface AgentAuditRecord {
 - Serialize appends, fsync/close predictably, enforce `0600`, tolerate/truncate a partial last line, and rotate without following symlinks.
 - Commands view a paginated sanitized representation, export the same records through a save dialog, and clear only after confirmation.
 
-## Implementation checklist
+## Milestone completion checklist
 
-- [ ] Add MCP/IPC settings and agent-policy editor controls with disabled secure defaults/warnings.
-- [ ] Bundle the companion separately and enforce import rules preventing VS Code/SSH/credential dependencies.
-- [ ] Implement private runtime directory, per-activation discovery/token/socket lifecycle, permissions, framed protocol, authentication, validation, concurrency, and cancellation.
-- [ ] Implement companion stdio tools, IPC translation, error mapping, shutdown, and self-test.
-- [ ] Add generic setup/config command and Node compatibility checks.
-- [ ] Implement fresh per-call policy engine, active-request registry, immediate revocation, confirmation queue, and destructive classifier.
-- [ ] Implement canonical root service for existing/new paths and mutation-time rechecks.
-- [ ] Implement discovery, bounded exec, and all SFTP tool handlers through shared services.
-- [ ] Implement keyed opaque version tokens, range/encoding handling, exact size caps, and forced-write confirmation.
-- [ ] Implement bounded permission-safe audit JSONL, rotation, view, export, and clear.
-- [ ] Add deactivation ordering: stop accepts, revoke/cancel calls, close IPC, remove socket/discovery/token references, close audit, then shared network cleanup.
+This checklist is the authoritative completion gate for Milestone 07. Check an item only after its implementation and applicable tests/evidence satisfy the detailed requirements below. The milestone is complete only when every item is checked; no implementation, test, documentation, or verification work described by this milestone may remain.
+
+### Entry gate, packaging, and trust boundary
+
+- [ ] Re-run and record all Milestones 01–06 exit criteria, human workflows, tests, and package checks as passing before starting the Milestone 07 completion sign-off.
+- [ ] Verify shared SSH/SFTP services provide canonical paths, safe atomic writes, cancellation, size/time/concurrency bounds, exact error mapping, and deterministic disposal required by every MCP handler.
+- [ ] Pin an official compatible MCP v2 TypeScript SDK, its schema-validation dependency, and supported companion Node engine exactly; cover the supported Linux socket/filesystem behavior in CI fixtures.
+- [ ] Define and document the v1 trust boundary: the companion is an untrusted stdio/IPC bridge, while connection lookup, credentials, host trust, policy, confirmation, SSH/SFTP execution, and audit authority remain in the extension host.
+- [ ] Produce a separately bundled Node companion with static MCP tool definitions and enforced imports proving it contains no `vscode`, `ssh2`, SecretStorage, private-key, direct SSH/SFTP, TCP/HTTP, or daemon authority.
+- [ ] Add MCP/IPC settings and per-connection agent-policy editor controls with agent access disabled, independent read/write/exec grants, absolute allowed roots, `confirmationMode: 'always'`, and reserved interactive-shell access unavailable by default.
+- [ ] Show explicit warnings before switching confirmation to `destructive` or `never`, and document that classification/IPC authentication is not a security boundary against compromise of the same local user.
+
+### Discovery, IPC, companion, and setup
+
+- [ ] Create a fresh per-activation instance id, IPC generation, and cryptographically random 256-bit token; never persist it outside the current discovery lifecycle.
+- [ ] Create the Unix socket in a validated private `0700` runtime directory under `$XDG_RUNTIME_DIR` or a private short-path temp fallback and reject unsafe ownership/permission/path conditions.
+- [ ] Write a protocol-versioned, expiring discovery file under extension global storage with `0600` permissions and only instance id, socket path, token, creation time, and expiry.
+- [ ] Rotate discovery/socket/token state on every activation and reliably unlink discovery and socket artifacts on deactivation or failed startup.
+- [ ] Implement 24 MiB length-prefixed UTF-8 JSON framing, exact frame schemas, 128-character request-id caps, method allowlisting, malformed/truncated/oversized rejection, and bounded error responses.
+- [ ] Authenticate the first frame using protocol, instance, and constant-time token validation; bind the socket session and reject any later identity/token change, unknown privileged field, or prototype-shaped input.
+- [ ] Limit each companion connection to eight concurrent requests and associate every request with cancellation triggered by MCP cancellation, socket close, policy revocation, connection deletion, or extension shutdown.
+- [ ] Ensure the IPC server never logs/audits tokens, frames, raw tool payloads, commands, stdout/stderr, file content, credentials, or private-key data.
+- [ ] Implement the companion with the official v2 stdio transport, local schema checks, request/cancellation IPC translation, bounded stable error mapping, and no connection/policy/result caching.
+- [ ] Handle SIGINT, SIGTERM, stdin close, socket loss, editor absence, and stale discovery by cancelling outstanding work, closing IPC, and returning documented bounded failures without leaving a process/daemon.
+- [ ] Implement companion `--self-test` and editor/discovery/socket absence failure within five seconds with actionable instructions.
+- [ ] Implement `easysshManager.configureMcp` to verify packaged paths, discover or request Node without a shell, spawn `node --version` argv-safely, enforce the supported range, run self-test, confirm/enable the bridge, and emit generic configuration.
+- [ ] Generate/copy/save only a generic JSON snippet containing absolute command/argument paths; include no credential/token and never edit any MCP client's configuration automatically.
+
+### Policy, confirmation, revocation, and path safety
+
+- [ ] Runtime-validate each MCP input and global bound before resolving a connection or performing any authorization/execution work.
+- [ ] For every call, freshly resolve the connection, reload policy, check the independent grant, canonicalize/enforce roots, apply confirmation, execute with bounds/cancellation, and append the audit outcome in `finally` in that exact order.
+- [ ] Reject empty/non-absolute/invalid allowed roots and canonicalize configured roots with SFTP `realpath`, failing closed whenever canonicalization is unavailable.
+- [ ] Track active/queued request ids by connection, grant, and root so disabling access, removing a grant/root, deleting a connection, or shutting down immediately cancels affected work and rejects future calls.
+- [ ] Implement `always`, conservative `destructive`, and `never` confirmation behavior exactly, including prompts for all required SFTP mutations and uncertainty-defaults-to-prompt exec classification.
+- [ ] Show client label, connection name, tool, safe command summary or exact normalized operation/path, and bounds in Approve/Deny prompts without secret/file content.
+- [ ] Serialize prompts per connection, expire them after 60 seconds, deny on close/timeout/policy change/shutdown, and freshly re-evaluate queued policy after every preceding response.
+- [ ] Normalize absolute POSIX paths, reject NUL/relative/above-root traversal, and use equality-or-segment-descendant comparisons rather than lexical prefixes.
+- [ ] For existing resources, use `realpath` and require canonical containment; for new destinations, walk with `lstat` to the nearest existing ancestor, canonicalize it, and validate every missing segment.
+- [ ] Recheck source and destination containment immediately before mutation to resist parent replacement/symlink races; require both rename endpoints inside allowed roots on the same connection.
+- [ ] Allow link metadata listing/stat only as specified; reject read/write/delete traversal through links unless the canonical target independently remains allowed, and never follow links recursively.
+
+### MCP tools and bounded execution
+
+- [ ] Implement `remote_list_connections` with an empty input and only enabled UUID/name/host/port/username, effective grants, and allowed roots—never auth details, local key paths, provenance, SecretStorage identifiers, or credentials.
+- [ ] Implement independent non-PTY `ssh_exec` through shared host/auth services with 1–32,768-byte non-NUL commands, absolute validated `cwd`, safe POSIX `cd --` quoting, and no local shell interpolation.
+- [ ] Enforce exec timeout defaults/maxima, cancellation, separate 1 MiB raw stdout/stderr caps, channel termination on overflow, no partial output on `OUTPUT_LIMIT`, and structured exit/signal/timed-out/duration results.
+- [ ] Implement `sftp_list` for exactly one directory with bounded safe metadata and `sftp_stat` with `lstat`, canonical-containment result, and opaque metadata version.
+- [ ] Implement ranged `sftp_read` with offset/length/eof semantics, strict UTF-8 or canonical base64, a 4 MiB raw cap, total size, and keyed per-activation opaque versions derived without forgeable exposed fields.
+- [ ] Implement `sftp_write` with canonical base64/UTF-8 decoding, pre-allocation 20 MiB decoded cap, missing-file creation, matching-version overwrite, explicitly confirmed force bypass, shared atomic writer, and returned fresh version.
+- [ ] Implement `sftp_mkdir` for one missing directory with existing parents and `sftp_rename` with both endpoints contained plus fresh no-overwrite checks.
+- [ ] Implement `sftp_delete` for file/link by default and explicitly recursive directories only with strong applicable confirmation, iterative bounded post-order traversal, cancellation, and no link following.
+- [ ] Route every tool through shared connection/auth/host-trust/SFTP services, stable domain errors, operation limits, cancellation, mutation-time policy/path rechecks, and targeted cache/provider updates.
+- [ ] Ensure decoded/encoded sizes, list counts, recursive traversal, IPC frames, request concurrency, execution time, and returned errors are all bounded before unbounded allocation or work.
+
+### Audit and shutdown
+
+- [ ] Implement serialized metadata-only JSONL audit records with the specified fields, keyed command fingerprints, safe normalized targets, confirmation/outcome/error/duration, and no raw command/cwd content, output, file data, auth data, IPC token, or payload.
+- [ ] Store audit files under extension global storage with `0600` permissions, symlink-safe open/rotation, predictable flush/close, partial-last-line recovery, and combined 30-day/10 MiB retention.
+- [ ] Implement paginated sanitized audit viewing, save-dialog export of the same sanitized representation, and confirmation-protected clearing.
+- [ ] Implement ordered deactivation that stops accepts, denies prompts, revokes/cancels calls, closes companion sockets/IPC, removes discovery/socket/token references, flushes/closes audit storage, and then performs shared network cleanup.
+
+### Automated verification
+
+- [ ] Add discovery/socket lifecycle tests for permissions, private fallback directories, rotation/expiry, stale generation/token, wrong instance/protocol, startup failure, and complete cleanup.
+- [ ] Add IPC tests for oversized/truncated/invalid/prototype frames, unknown methods/fields, duplicate ids, authentication rebinding attempts, concurrency caps, cancellation, socket loss, and bounded sanitized errors.
+- [ ] Add companion tests for self-test, five-second unavailable-editor behavior, stdio request/result/error/cancel mapping, SIGINT/SIGTERM/stdin close, no state caching, and prohibited-import enforcement.
+- [ ] Add setup tests proving argv-safe Node version checks, supported-range enforcement, absolute-path JSON quoting, generic config generation, no client-config mutation, and absence of tokens/credentials.
+- [ ] Add policy tests for disabled/unknown/deleted connections, independent grants, invalid/empty roots, secure defaults, every confirmation result/expiry/close, warning acknowledgements, prompt serialization, and queued re-evaluation.
+- [ ] Add revocation tests proving immediate cancellation/rejection for queued, active, and future requests after access disable, grant/root removal, connection deletion, and shutdown.
+- [ ] Add canonical-path adversarial tests for `/app` versus `/application`, `..`, relative/encoded/NUL input, root equality, broken/internal/external links, outside-to-inside links, missing nested targets, parent replacement races, and cross-root rename.
+- [ ] Add direct-IPC adversarial tests proving schemas, grants, confirmation, versions, size limits, and root containment cannot be bypassed without the companion.
+- [ ] Add discovery and exec tests for safe-field filtering, stdout/stderr/exit/signal/timeout/cwd quoting, cancellation, per-stream overflow, Unicode, length/NUL rejection, disconnect, and confirmation modes.
+- [ ] Add SFTP tool tests for list/stat metadata, range/eof boundaries, UTF-8/base64 validation, 4 MiB/20 MiB limits, stale/forged/matching/forced versions, create/mkdir/rename conflicts, link/file/recursive delete, cancellation, and no link recursion.
+- [ ] Add audit tests for every outcome, concurrent serialized append, partial-line recovery, retention rotation, permissions, symlink attacks, pagination/export/clear, and sentinel absence from persisted bytes.
+- [ ] Add companion-to-extension-to-Docker integration tests for discovery, exec, ranged reads, create/versioned/forced overwrite, mkdir/rename/delete, permission denial, confirmation approval/denial/expiry, cancellation, disconnect, and immediate revocation.
+- [ ] Add secret-boundary sentinel tests proving credentials, private keys/paths where prohibited, passphrases, SecretStorage ids, IPC tokens, raw commands, file bodies, and stdout/stderr do not appear in unauthorized MCP results/errors, logs, audit, config, discovery, or process arguments.
+- [ ] Run the complete automated suite plus formatting, lint, typecheck, both bundles, package-content/import checks, Docker/extension integration, and all previous milestone checks and record all results as passing.
+
+### Manual acceptance and completion gate
+
+- [ ] Run Configure MCP, validate supported/unsupported Node versions, self-test the companion, generate a generic snippet, and connect a local MCP client without automatic config edits.
+- [ ] With all policies disabled, verify discovery omits the connection and guessed UUID/direct IPC calls fail without leaking connection/auth details.
+- [ ] Enable read for one root; exercise list/stat/ranged UTF-8/base64 reads inside it and attempt lexical, traversal, encoded, broken-link, and symlink escape cases.
+- [ ] Enable exec with default Always Ask; approve, deny, expire, cancel, timeout, and overflow commands and verify exact safe outcomes and prompt serialization.
+- [ ] Read a file/version, change it externally, verify stale/forged writes fail, then exercise matching-version and explicitly confirmed force writes on harmless data.
+- [ ] Enable write and exercise create, mkdir, rename conflict, link/file delete, and strongly confirmed bounded recursive directory delete on a test tree.
+- [ ] Revoke each grant/root and all agent access during queued and active work; verify immediate cancellation and subsequent rejection.
+- [ ] View, export, rotate, and clear audit records; scan global storage, logs, config, process arguments, discovery/socket data, responses, and exports for sentinel secrets/content.
+- [ ] Close VSCodium during active work and verify companion failure within the documented bound, no useful discovery/socket, no daemon, cancelled work, closed audit, and removed runtime artifacts.
+- [ ] Smoke-test the generic MCP semantics with one client now and reserve the required second MCP-capable client cross-check for the explicit Milestone 08 release gate.
+- [ ] Confirm the companion contains no credential/network authority, every request is freshly authorized/contained/confirmed/bounded/cancellable/audited, and all supported Linux permission/shutdown checks pass.
+- [ ] Re-run every previous milestone gate and confirm every Milestone 07 deliverable, exit criterion, risk mitigation, and stated non-goal boundary is satisfied with no remaining implementation, test, documentation, or verification task.
 
 ## Automated tests
 

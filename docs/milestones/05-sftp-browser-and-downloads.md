@@ -162,18 +162,92 @@ interface DownloadPlanItem {
 - Context menus may be custom webview menus but must dismiss/focus correctly and contain only actions valid for the selected kind.
 - Empty-space actions: New File, New Folder, Upload Files, Upload Folder, Refresh. Upload commands become functional in Milestone 06.
 
-## Implementation checklist
+## Milestone completion checklist
 
-- [ ] Implement SftpPanelManager create/reveal/restore/dispose behavior and serializer.
-- [ ] Build strict-CSP HTML/CSS/TypeScript assets with no dynamic unsafe HTML.
-- [ ] Define shared protocol types plus independent extension-host runtime schemas.
-- [ ] Implement generation-aware request broker, cancellation, retryable error responses, and loading state.
-- [ ] Implement list, navigation/history/breadcrumb, refresh, sorting, selection, activation, and connection status.
-- [ ] Route file open through the existing guarded provider command beside the panel.
-- [ ] Implement new file/folder, open-resource rename blocking, file/link delete, bounded recursive directory delete, and clipboard copy.
-- [ ] Implement DownloadService preflight, destination containment, streaming/buffering, conflicts, progress, cancellation, temp cleanup, and summary.
-- [ ] Wire context/toolbar actions and placeholder upload entry points.
-- [ ] Add accessible keyboard semantics, high-contrast/theme checks, and panel-state restoration tests.
+This checklist is the authoritative completion gate for Milestone 05. Check an item only after its implementation and applicable tests/evidence satisfy the detailed requirements below. The milestone is complete only when every item is checked; no implementation, test, documentation, or verification work described by this milestone may remain.
+
+### Entry gate and contracts
+
+- [ ] Re-run and record all Milestones 01–04 exit criteria, tests, and package checks as passing before starting the Milestone 05 completion sign-off.
+- [ ] Verify the SFTP pool, URI/path codec, FileSystemProvider, atomic writer, domain-error mapping, and guarded remote-open command expose every behavior required by this milestone.
+- [ ] Define the versioned `SftpPanelState`, `SftpRequest`, `SftpResponse`, and `RemoteEntryView` contracts in shared code without exposing secrets or transport objects.
+- [ ] Implement independent extension-host runtime validation for every request variant, including exact shapes, type allowlists, string/array limits, prototype-shaped input rejection, child-name validation, and path normalization.
+- [ ] Bind every panel to its host-owned connection UUID and prove message-supplied identifiers or paths cannot override connection identity or bypass fresh connection lookup.
+
+### Panel lifecycle, protocol, and security
+
+- [ ] Implement one `SftpPanel` per connection in `SftpPanelManager`, including create-or-reveal behavior, connection-rename title updates, and duplicate-panel prevention.
+- [ ] Implement panel serialization/restoration with version checking, connection re-resolution, normalized current/history paths, invalid-state/history removal, and a clear deleted-connection outcome.
+- [ ] Dispose panel-scoped controllers, listeners, leases, and pending requests without closing provider/editor work that still shares the connection pool.
+- [ ] Close the associated panel after confirmed connection deletion and make already-open provider documents fail clearly on their next operation.
+- [ ] Build packaged HTML/CSS/TypeScript webview assets with a per-render nonce and the specified strict CSP, with no remote sources, inline handlers, `unsafe-eval`, Node access, or unsafe dynamic HTML.
+- [ ] Render all remote names and errors through safe DOM APIs/static templates and verify no untrusted value can enter executable markup.
+- [ ] Implement request/response correlation for concurrent work, monotonically increasing list/navigation generations, cancellation, disposal handling, retryable sanitized errors, and loading-state accounting.
+- [ ] Ensure stale, cancelled, and post-disposal responses settle their work but cannot replace the current view or corrupt global/panel loading state.
+
+### Browser behavior and accessibility
+
+- [ ] Implement one-directory-at-a-time remote listing without recursive/preload behavior and return display-only entry view models.
+- [ ] Implement exact-path breadcrumbs, Back, Forward, Up, and Refresh, including root behavior, consecutive-history deduplication, 100-entry history caps, and forced cache bypass on Refresh.
+- [ ] Implement stable sorting by name/size/mtime and direction, with default directories-first locale-aware name ordering, distinct stable link/other groups, and persisted sort state.
+- [ ] Implement selection and file/directory/link activation, resolving links only for explicit single-resource operations and never following links recursively.
+- [ ] Route file activation through the guarded provider open command with `ViewColumn.Beside` so the browser remains visible and focus behavior stays correct.
+- [ ] Implement connecting/connected/disconnected/error status using text and icon, bounded user-initiated connection, useful loss errors, and a visible Reconnect action without background retry loops.
+- [ ] Make Reconnect invalidate the old pool entry and issue exactly one fresh listing after success while leaving authentication and host-key prompts in shared extension-host services.
+- [ ] Build toolbar, breadcrumb, column headers, list, status, empty/loading/error states, and only local codicons/assets using VS Code theme tokens.
+- [ ] Implement roving focus with appropriate listbox/treegrid semantics, visible focus, Enter activation, Space selection, context-menu key/Shift+F10, Escape, labelled toolbar controls, and correct focus restoration.
+- [ ] Provide keyboard, context-menu, and toolbar routes for every operation; make custom menus dismiss correctly and expose only actions valid for the current selection/kind.
+- [ ] Provide empty-space New File, New Folder, Upload Files, Upload Folder, and Refresh actions, with upload entry points clearly non-functional placeholders until Milestone 06.
+
+### Remote mutations
+
+- [ ] Implement New File with validated names, fresh non-existence checks, zero-byte atomic creation, targeted events/cache invalidation, parent refresh, and open-beside behavior.
+- [ ] Implement New Folder with validated names, fresh non-existence checks, one `mkdir`, targeted invalidation, and parent refresh.
+- [ ] Implement same-parent rename with root/existing-target rejection and fresh source/destination checks immediately before mutation.
+- [ ] Block file or directory rename when the exact provider resource or any descendant is present in open text documents or visible tab inputs, with actionable close-editor guidance.
+- [ ] Implement file/link deletion with the exact normalized path in an extension-host Delete confirmation and guarantee that deleting a link never affects its target.
+- [ ] Implement directory deletion with `lstat`, explicit Delete Recursively confirmation, iterative depth-first post-order traversal, entry/byte/time bounds, cancellation points, partial-failure reporting, and no symlink traversal.
+- [ ] Recheck state after every destructive/conflict confirmation and before the mutation, then emit only the precise provider events and affected-parent refreshes.
+- [ ] Implement Copy Path exclusively through `vscode.env.clipboard`, without granting clipboard access to the webview.
+
+### Downloads
+
+- [ ] Implement destination selection with `showOpenDialog` for local and writable virtual `workspace.fs` destinations.
+- [ ] Implement iterative multi-root download preflight that preserves relative layout and empty directories, caps planned entries at the documented default, detects source/link escape, and never follows symlinks.
+- [ ] Prove every joined remote-relative destination remains contained by the selected destination after URI-aware joining and normalization.
+- [ ] Implement same-directory temporary-file streaming and authorized rename/replace for local `file:` destinations.
+- [ ] Implement bounded buffering for non-`file:` destinations, pre-reject files above `maxBufferedTransferMiB`, and return an actionable limitation without reading oversized content.
+- [ ] Implement operation-scoped Overwrite, Overwrite All, Skip, Skip All, and Cancel decisions; merge directory collisions, skip whole subtrees when selected, and never recursively replace a destination directory.
+- [ ] Skip symbolic links with an explicit reported reason and never materialize or dereference them.
+- [ ] Implement cancellable progress with current relative path, file counts, and truthful byte progress when known.
+- [ ] On cancellation/failure, safely settle the active unit, remove known temporary artifacts where possible, retain prior completed files, and return an exact completed/skipped/failed/cancelled/cleanup summary.
+
+### Automated verification
+
+- [ ] Add protocol/security tests for CSP sources/nonces, safe DOM construction, exact schema rejection, size limits, invalid paths/names, connection override attempts, and prototype-shaped values.
+- [ ] Add broker/lifecycle tests for concurrent request correlation, stale/cancelled/post-disposal responses, one-panel-per-connection behavior, state restoration, invalid/deleted connections, title updates, and disposal isolation.
+- [ ] Add browser-state tests for history/root/up/breadcrumb behavior, sorting stability/persistence, forced refresh, connection transitions, controlled reconnect, selection/activation, and open-beside routing.
+- [ ] Add accessibility DOM tests for keyboard-only operation, focus restoration, menu visibility/dismissal, roles, labels, status announcements, theme tokens, and high-contrast behavior.
+- [ ] Add mutation tests covering new file/folder success plus conflict/permission/disconnect, rename same/open/missing/existing/root cases, targeted events/refreshes, and zero mutation when blocked.
+- [ ] Add delete tests covering confirmation/cancel, link-target preservation, empty/deep directory trees without call-stack recursion, post-order behavior, symlink non-follow, cancellation, traversal caps, and truthful partial-error summaries.
+- [ ] Add download tests for files, nested/empty/Unicode directories, multi-selection layout, every conflict decision and its operation scope, directory merge, subtree skip, and no implicit recursive replacement.
+- [ ] Add download safety/failure tests for containment/traversal, symlink skip, local streaming, virtual buffering limits, temp cleanup, permission/read/write failures, disconnect, cancellation, and exact progress/summary values.
+- [ ] Add Docker/extension integration tests for navigation, forced external-change refresh, create/rename/delete, open-beside, download, stop/restart with one controlled reconnect, and panel restoration without persisted secrets.
+- [ ] Run the complete automated suite plus formatting, lint, typecheck, build, and package-content checks and record all results as passing.
+
+### Manual acceptance and completion gate
+
+- [ ] Verify opening SFTP twice for one connection reveals the same panel and a connection rename updates its title.
+- [ ] Verify deep navigation, breadcrumb/Back/Forward/Up, sorting, selection, and forced refresh entirely with the keyboard, including a remote change made outside the extension.
+- [ ] Verify opening a text file keeps the browser visible and opens the provider-backed document beside it in a normal editor.
+- [ ] Verify create, rename, copy-path, and delete behavior for files, directories, empty directories, links, conflicts, and permission-denied locations.
+- [ ] Verify rename is blocked for an open file and an open descendant of a directory until all affected editors/tabs are closed.
+- [ ] Verify file and nested-directory downloads into local and writable virtual destinations, including every batch conflict choice, empty directories, link skips, cancellation, and partial summaries.
+- [ ] Verify mid-list and mid-download disconnects, explicit reconnect, safe destination/temp state, actionable errors, and absence of reconnect loops.
+- [ ] Reload the editor and verify valid panel/navigation/sort restoration, deleted/invalid state handling, and no persisted secret data.
+- [ ] Complete core flows at 200% zoom in light, dark, and high-contrast themes using keyboard-only interaction and confirm visible focus and screen-reader-friendly names/status.
+- [ ] Confirm all targeted mutations invalidate only affected cache entries/parents, all panel-owned resources return to baseline after close/deactivation, and no credential or remote file content appears in webview state, logs, errors, or package artifacts.
+- [ ] Re-run every previous milestone gate and confirm every Milestone 05 deliverable, exit criterion, risk mitigation, and stated non-goal boundary is satisfied with no remaining implementation, test, documentation, or verification task.
 
 ## Automated tests
 
