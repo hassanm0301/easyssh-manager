@@ -1,7 +1,7 @@
 import * as assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { connect as connectSocket } from 'node:net';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +33,7 @@ import { SftpBrowserService } from '../../../sftp/SftpBrowserService';
 import { DefaultSftpConnectionPool } from '../../../sftp/SftpConnectionPool';
 import { normalizeRemotePath } from '../../../sftp/SftpUriCodec';
 import type { ParsedSftpUri, SftpClient, SftpUriCodec } from '../../../sftp/ports';
+import { WorkspaceUploadService } from '../../../sftp/WorkspaceUploadService';
 
 const scheme = 'remote-sftp-acceptance';
 const password = 'extension-host-acceptance-password';
@@ -344,6 +345,80 @@ suite('SFTP normal-editor acceptance', () => {
     assert.equal(deleted.failed.length, 0);
     assert.ok(deleted.deleted >= 3, 'recursive delete must unlink the link and file before rmdir');
     await assert.rejects(() => external.lstat(`${root}/nested`));
+  });
+
+  test('uploads local workspace files and empty folders through the Milestone 6 host service', async function () {
+    this.timeout(60_000);
+    const localRoot = await mkdtemp(join(tmpdir(), 'easyssh-workspace-upload-'));
+    const remote = `${remoteRoot}/upload-acceptance`;
+    try {
+      await mkdir(join(localRoot, 'project', 'empty'), { recursive: true });
+      await mkdir(join(localRoot, 'project', 'nested'), { recursive: true });
+      await writeFile(join(localRoot, 'project', 'nested', 'hello-世界.txt'), 'workspace upload\n');
+      await external.mkdir(remote);
+      const warnings: string[] = [];
+      const uploads = new WorkspaceUploadService(
+        {
+          FileType: vscode.FileType,
+          ProgressLocation: vscode.ProgressLocation,
+          Uri: vscode.Uri,
+          workspace: vscode.workspace,
+          window: {
+            showOpenDialog: async () => undefined,
+            showWarningMessage: async (message: string) => {
+              warnings.push(message);
+              return 'Skip';
+            },
+            withProgress: async (
+              _options: unknown,
+              task: (progress: { report(): void }, token: vscode.CancellationToken) => unknown,
+            ) =>
+              task({ report: () => undefined }, {
+                isCancellationRequested: false,
+                onCancellationRequested: () => ({ dispose: () => undefined }),
+              } as vscode.CancellationToken),
+          },
+        } as never,
+        pool,
+        cache,
+        codec,
+        provider,
+        { maxBufferedTransferMiB: () => configuration.maxBufferedTransferMiB },
+      );
+      const neverCancelled = {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      };
+      const firstUpload = await uploads.uploadWorkspaceItems({
+        connectionId: first.id,
+        sourceUris: [vscode.Uri.file(join(localRoot, 'project'))],
+        targetRemotePath: remote,
+        cancellation: neverCancelled,
+      });
+      assert.equal(firstUpload.uploaded, 1);
+      assert.equal(firstUpload.createdDirectories, 3);
+      assert.equal(firstUpload.failed.length, 0);
+      assert.equal(
+        Buffer.from(await external.readFile(`${remote}/project/nested/hello-世界.txt`)).toString(),
+        'workspace upload\n',
+      );
+      await external.lstat(`${remote}/project/empty`);
+
+      const repeated = await uploads.uploadWorkspaceItems({
+        connectionId: first.id,
+        sourceUris: [vscode.Uri.file(join(localRoot, 'project'))],
+        targetRemotePath: remote,
+        cancellation: neverCancelled,
+      });
+      assert.ok(
+        repeated.skipped.length > 0,
+        'Skip conflict policy should preserve existing target files',
+      );
+      assert.ok(warnings.length > 0, 'directory/file conflicts should remain host-side prompts');
+      await uploads.dispose();
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+    }
   });
 });
 

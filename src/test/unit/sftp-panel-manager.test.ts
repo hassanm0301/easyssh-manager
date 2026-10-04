@@ -74,6 +74,19 @@ function harness(found = connection()) {
     remoteFileOpener: {} as never,
     codec: {} as never,
     pool: {} as never,
+    uploads: {
+      onDidCommit: () => ({ dispose: () => undefined }),
+      uploadWorkspaceItems: vi.fn(),
+      chooseAndUpload: vi.fn(),
+    } as never,
+    createWorkspacePane: () =>
+      ({
+        initialize: () => ({ generation: 0, state: 'noWorkspace', roots: [] }),
+        onDidChange: () => ({ dispose: () => undefined }),
+        dispose: () => undefined,
+        readChildren: vi.fn(),
+        freshAuthorizedSources: vi.fn(),
+      }) as never,
     resolveConnection: vi.fn(async () => found as never),
   });
   return { manager, api, browser, created, serializer: () => serializer };

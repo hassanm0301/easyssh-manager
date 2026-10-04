@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EasySshError } from '../../common/errors';
 import { DefaultSftpConnectionPool } from '../../sftp/SftpConnectionPool';
-import type { SftpClient, SftpClientFactory } from '../../sftp/ports';
+import type { RemoteStat, SftpClient, SftpClientFactory } from '../../sftp/ports';
 import type { CancellationTokenLike } from '../../ssh/ports';
 
 const FIRST_ID = '11111111-1111-4111-8111-111111111111';
@@ -206,6 +206,61 @@ describe('SFTP connection pool', () => {
     const lease = await successfulAcquire;
     expect(open).toHaveBeenCalledOnce();
     await lease[Symbol.asyncDispose]();
+  });
+
+  it('runs editor work ahead of queued background transfer work without interrupting active operations', async () => {
+    const gates = new Map<string, ReturnType<typeof deferred<RemoteStat>>>();
+    const started: string[] = [];
+    const underlying = client({
+      stat: vi.fn((path: string) => {
+        started.push(path);
+        const gate = deferred<RemoteStat>();
+        gates.set(path, gate);
+        return gate.promise;
+      }),
+    });
+    const pool = new DefaultSftpConnectionPool(
+      { open: vi.fn(async () => underlying) },
+      new ConfigurationFake(),
+    );
+    const background = await pool.acquire(FIRST_ID, undefined, 'background');
+    const editor = await pool.acquire(FIRST_ID, undefined, 'editor');
+    const active = Array.from({ length: 6 }, (_, index) =>
+      background.client.stat(`/batch-${index}`),
+    );
+    const queuedBackground = background.client.stat('/batch-queued');
+    const queuedEditor = editor.client.stat('/editor-save');
+    await Promise.resolve();
+    expect(started).toEqual([
+      '/batch-0',
+      '/batch-1',
+      '/batch-2',
+      '/batch-3',
+      '/batch-4',
+      '/batch-5',
+    ]);
+
+    gates.get('/batch-0')?.resolve({ kind: 'file', size: 1, mtimeMs: 1 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started.at(-1)).toBe('/editor-save');
+
+    for (const path of [
+      '/batch-1',
+      '/batch-2',
+      '/batch-3',
+      '/batch-4',
+      '/batch-5',
+      '/editor-save',
+    ]) {
+      gates.get(path)?.resolve({ kind: 'file', size: 1, mtimeMs: 1 });
+    }
+    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+    expect(gates.get('/batch-queued')).toBeDefined();
+    gates.get('/batch-queued')?.resolve({ kind: 'file', size: 1, mtimeMs: 1 });
+    await Promise.all([...active, queuedBackground, queuedEditor]);
+    await background[Symbol.asyncDispose]();
+    await editor[Symbol.asyncDispose]();
   });
 
   it('cancels pending work and closes every entry during deactivation', async () => {
