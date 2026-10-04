@@ -1,6 +1,11 @@
 export type ErrorCode =
   | 'VALIDATION'
   | 'NOT_FOUND'
+  | 'ALREADY_EXISTS'
+  | 'NOT_DIRECTORY'
+  | 'IS_DIRECTORY'
+  | 'UNSUPPORTED'
+  | 'REMOTE_IO'
   | 'CONFLICT'
   | 'NETWORK'
   | 'MISSING_CREDENTIAL'
