@@ -10,6 +10,12 @@ import { RemoteFileOpenService } from '../../sftp/RemoteFileOpenService';
 import { SftpBrowserService } from '../../sftp/SftpBrowserService';
 import { normalizeRemotePath } from '../../sftp/SftpUriCodec';
 import type { SftpConnectionPool, SftpUriCodec } from '../../sftp/ports';
+import {
+  type TransferSummary,
+  WorkspacePaneService,
+  WorkspaceUploadService,
+  type WorkspacePaneView,
+} from '../../sftp/WorkspaceUploadService';
 import type { CancellationTokenLike } from '../../ssh/ports';
 import {
   MAX_HISTORY_ENTRIES,
@@ -34,6 +40,7 @@ interface PanelViewModel {
   readonly canGoUp: boolean;
   readonly sort: SftpPanelState['sort'];
   readonly connection: { readonly state: PanelConnectionState; readonly text: string };
+  readonly workspace: WorkspacePaneView;
 }
 
 interface SftpPanelDependencies {
@@ -45,6 +52,8 @@ interface SftpPanelDependencies {
   readonly remoteFileOpener: RemoteFileOpenService;
   readonly codec: SftpUriCodec;
   readonly pool: SftpConnectionPool;
+  readonly uploads: WorkspaceUploadService;
+  readonly createWorkspacePane: () => WorkspacePaneService;
 }
 
 interface SftpPanelManagerDependencies extends SftpPanelDependencies {
@@ -57,6 +66,7 @@ interface SftpPanelManagerDependencies extends SftpPanelDependencies {
 export class SftpPanelManager implements vscode.Disposable {
   private readonly panels = new Map<string, SftpPanel>();
   private serializer: vscode.Disposable | undefined;
+  private activeConnectionId: string | undefined;
 
   constructor(private readonly dependencies: SftpPanelManagerDependencies) {}
 
@@ -102,6 +112,7 @@ export class SftpPanelManager implements vscode.Disposable {
     const existing = this.panels.get(connection.id);
     if (existing) {
       existing.reveal();
+      this.activeConnectionId = connection.id;
       return;
     }
     const panel = this.dependencies.vscodeApi.window.createWebviewPanel(
@@ -111,6 +122,18 @@ export class SftpPanelManager implements vscode.Disposable {
       webviewOptions(this.dependencies.vscodeApi, this.dependencies.extensionUri),
     );
     this.attach(panel, connection);
+    this.activeConnectionId = connection.id;
+  }
+
+  async uploadFromCommand(kind: 'files' | 'folder'): Promise<TransferSummary> {
+    const panel = this.activeConnectionId ? this.panels.get(this.activeConnectionId) : undefined;
+    if (!panel) {
+      throw new EasySshError(
+        'NOT_FOUND',
+        'Open an SFTP browser before choosing workspace items to upload.',
+      );
+    }
+    return panel.uploadFromCommand(kind);
   }
 
   updateConnections(connections: readonly RemoteConnection[]): void {
@@ -139,6 +162,7 @@ export class SftpPanelManager implements vscode.Disposable {
   ): void {
     const instance = new SftpPanel(panel, connection, this.dependencies, restored, () => {
       this.panels.delete(connection.id);
+      if (this.activeConnectionId === connection.id) this.activeConnectionId = undefined;
     });
     this.panels.set(connection.id, instance);
     instance.start();
@@ -155,6 +179,10 @@ class SftpPanel implements vscode.Disposable {
   private connectionState: PanelConnectionState = 'connecting';
   private connectionText = 'Connecting';
   private entries: readonly RemoteEntryView[] = [];
+  private readonly workspace: WorkspacePaneService;
+  private workspaceView: WorkspacePaneView;
+  private readonly uploadControllers = new Set<PanelCancellation>();
+  private refreshTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -163,6 +191,8 @@ class SftpPanel implements vscode.Disposable {
     restored: SftpPanelState | undefined,
     private readonly onDispose: () => void,
   ) {
+    this.workspace = dependencies.createWorkspacePane();
+    this.workspaceView = this.workspace.initialize();
     this.state = restored ?? {
       version: SFTP_PANEL_STATE_VERSION,
       connectionId: connection.id,
@@ -182,6 +212,16 @@ class SftpPanel implements vscode.Disposable {
     this.subscriptions.push(
       this.panel.onDidDispose(() => this.dispose()),
       this.panel.webview.onDidReceiveMessage((message: unknown) => this.receive(message)),
+      this.workspace.onDidChange((reason) => {
+        if (reason !== 'filesystem') {
+          for (const controller of this.uploadControllers) controller.cancel();
+          this.workspaceView = this.workspace.initialize();
+        } else {
+          this.workspaceView = this.workspace.view();
+        }
+        this.render();
+      }),
+      this.dependencies.uploads.onDidCommit((event) => this.scheduleCommitRefresh(event)),
     );
   }
 
@@ -193,6 +233,10 @@ class SftpPanel implements vscode.Disposable {
     this.panel.reveal(this.dependencies.vscodeApi.ViewColumn.Active, false);
   }
 
+  uploadFromCommand(kind: 'files' | 'folder'): Promise<TransferSummary> {
+    return this.uploadPicker(this.state.currentPath, kind);
+  }
+
   updateTitle(name: string): void {
     this.panel.title = `SFTP: ${name}`;
   }
@@ -202,7 +246,12 @@ class SftpPanel implements vscode.Disposable {
     this.disposed = true;
     this.generation += 1;
     for (const controller of this.pendingControllers) controller.cancel();
+    for (const controller of this.uploadControllers) controller.cancel();
     this.pendingControllers.clear();
+    this.uploadControllers.clear();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
+    this.workspace.dispose();
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose();
     this.onDispose();
     this.panel.dispose();
@@ -293,6 +342,36 @@ class SftpPanel implements vscode.Disposable {
         return undefined;
       case 'download':
         return this.dependencies.downloads.chooseAndDownload(this.connection.id, request.paths);
+      case 'workspaceRefresh':
+        this.workspaceView = this.workspace.initialize();
+        this.render();
+        return this.workspaceView;
+      case 'workspaceExpand': {
+        try {
+          const entries = await this.workspace.readChildren(request.uri);
+          await this.panel.webview.postMessage({
+            type: 'workspaceChildren',
+            uri: request.uri,
+            entries,
+          });
+        } catch (error) {
+          await this.panel.webview.postMessage({
+            type: 'workspaceError',
+            uri: request.uri,
+            error: sanitizeSftpError(error).message,
+          });
+          throw error;
+        }
+        return undefined;
+      }
+      case 'workspaceDrop': {
+        const sources = await this.workspace.freshAuthorizedSources(request.payload);
+        return this.upload(sources, request.targetPath);
+      }
+      case 'uploadFiles':
+        return this.uploadPicker(request.targetPath, 'files');
+      case 'uploadFolder':
+        return this.uploadPicker(request.targetPath, 'folder');
     }
   }
 
@@ -368,7 +447,11 @@ class SftpPanel implements vscode.Disposable {
   private async withClient<T>(
     operation: (client: import('../../sftp/ports').SftpClient) => Promise<T>,
   ): Promise<T> {
-    const lease = await this.dependencies.pool.acquire(this.connection.id);
+    const lease = await this.dependencies.pool.acquire(
+      this.connection.id,
+      undefined,
+      'interactive',
+    );
     try {
       return await operation(lease.client);
     } finally {
@@ -386,6 +469,7 @@ class SftpPanel implements vscode.Disposable {
       canGoUp: this.state.currentPath !== '/',
       sort: this.state.sort,
       connection: { state: this.connectionState, text: this.connectionText },
+      workspace: this.workspaceView,
     };
   }
 
@@ -406,6 +490,66 @@ class SftpPanel implements vscode.Disposable {
 
   private async respond(response: SftpResponse<unknown>): Promise<void> {
     if (!this.disposed) await this.panel.webview.postMessage({ type: 'response', ...response });
+  }
+
+  private async upload(
+    sources: readonly vscode.Uri[],
+    dropTarget: string,
+  ): Promise<TransferSummary> {
+    const targetRemotePath = await this.resolveUploadTarget(dropTarget);
+    const cancellation = new PanelCancellation();
+    this.uploadControllers.add(cancellation);
+    try {
+      return await this.dependencies.uploads.uploadWorkspaceItems({
+        connectionId: this.connection.id,
+        sourceUris: sources,
+        targetRemotePath,
+        cancellation,
+      });
+    } finally {
+      this.uploadControllers.delete(cancellation);
+    }
+  }
+
+  private async uploadPicker(
+    dropTarget: string,
+    kind: 'files' | 'folder',
+  ): Promise<TransferSummary> {
+    const targetRemotePath = await this.resolveUploadTarget(dropTarget);
+    const cancellation = new PanelCancellation();
+    this.uploadControllers.add(cancellation);
+    try {
+      // The picker result is kept inside the host and does not mint webview URI grants.
+      return await this.dependencies.uploads.chooseAndUpload(
+        this.connection.id,
+        targetRemotePath,
+        kind,
+        cancellation,
+      );
+    } finally {
+      this.uploadControllers.delete(cancellation);
+    }
+  }
+
+  private async resolveUploadTarget(requestedPath: string): Promise<string> {
+    const path = normalizeRemotePath(requestedPath);
+    const stat = await this.withClient((client) => client.lstat(path));
+    return stat.kind === 'directory' ? path : posix.dirname(path);
+  }
+
+  private scheduleCommitRefresh(event: {
+    readonly connectionId: string;
+    readonly path: string;
+  }): void {
+    if (event.connectionId !== this.connection.id || this.disposed) return;
+    const current = this.state.currentPath;
+    if (posix.dirname(event.path) !== current && event.path !== current) return;
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      if (!this.disposed)
+        void this.load(this.state.currentPath, true, false).catch(() => undefined);
+    }, 100);
   }
 }
 
@@ -437,9 +581,9 @@ export function sftpPanelHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
 <link rel="stylesheet" href="${style}"></head><body>
 <main id="sftp-browser" aria-label="Remote SFTP browser"><section class="toolbar" aria-label="SFTP browser toolbar">
-<button type="button" id="back" title="Back">Back</button><button type="button" id="forward" title="Forward">Forward</button><button type="button" id="up" title="Up one folder">Up</button><button type="button" id="refresh" title="Refresh remote directory">Refresh</button><button type="button" id="new-file">New File</button><button type="button" id="new-folder">New Folder</button><button type="button" id="download">Download</button><button type="button" id="more" aria-haspopup="menu" aria-expanded="false">More actions</button>
+<button type="button" id="back" title="Back">Back</button><button type="button" id="forward" title="Forward">Forward</button><button type="button" id="up" title="Up one folder">Up</button><button type="button" id="refresh" title="Refresh remote directory">Refresh</button><button type="button" id="new-file">New File</button><button type="button" id="new-folder">New Folder</button><button type="button" id="upload-files">Upload Files</button><button type="button" id="upload-folder">Upload Folder</button><button type="button" id="download">Download</button><button type="button" id="more" aria-haspopup="menu" aria-expanded="false">More actions</button>
 </section><nav id="breadcrumbs" aria-label="Remote path"></nav><p id="status" role="status" aria-live="polite"><span aria-hidden="true">○</span> Connecting</p>
-<div id="empty-actions" class="toolbar"><button type="button" id="upload-files">Upload Files</button><button type="button" id="upload-folder">Upload Folder</button></div>
+<section id="workspace-pane" aria-label="Workspace upload sources"><div class="toolbar"><h2>Workspace</h2><button type="button" id="workspace-refresh">Refresh Workspace</button></div><p id="workspace-state" role="status" aria-live="polite"></p><div id="workspace-roots" role="tree" aria-label="Workspace files"></div></section>
 <section id="list" role="listbox" aria-label="Remote directory entries" tabindex="0"><div class="headers" role="presentation"><button type="button" data-sort="name">Name</button><button type="button" data-sort="size">Size</button><button type="button" data-sort="mtime">Modified</button></div><div id="rows"></div><p id="empty" hidden>No remote items in this directory.</p><p id="error" hidden></p></section>
 <div id="menu" role="menu" hidden><button type="button" role="menuitem" data-menu="copy">Copy Path</button><button type="button" role="menuitem" data-menu="rename">Rename</button><button type="button" role="menuitem" data-menu="delete">Delete</button></div></main>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;

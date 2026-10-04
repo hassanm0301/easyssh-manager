@@ -149,6 +149,21 @@ export class Ssh2SftpClient implements SftpClient {
     }
   }
 
+  createWriteStream(path: string, options: RemoteWriteOptions): Writable {
+    const remotePath = this.path(path);
+    validateWriteOptions(options, remotePath);
+    this.assertOpen(remotePath);
+    try {
+      return this.sftp.createWriteStream(remotePath, {
+        flags: options.overwrite ? 'w' : 'wx',
+        autoClose: true,
+        ...(options.mode === undefined ? {} : { mode: options.mode }),
+      });
+    } catch (error) {
+      throw mapSftpError(error, remotePath, options.overwrite ? 'write' : 'exclusive-create');
+    }
+  }
+
   async mkdir(path: string): Promise<void> {
     const remotePath = this.path(path);
     await this.callbackVoid('mkdir', remotePath, (done) => this.sftp.mkdir(remotePath, done));

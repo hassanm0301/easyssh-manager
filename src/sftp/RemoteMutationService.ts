@@ -278,7 +278,7 @@ export class RemoteMutationService {
     connectionId: ConnectionId,
     operation: (client: import('./ports').SftpClient) => Promise<T>,
   ): Promise<T> {
-    const lease = await this.pool.acquire(connectionId);
+    const lease = await this.pool.acquire(connectionId, undefined, 'interactive');
     try {
       return await operation(lease.client);
     } finally {

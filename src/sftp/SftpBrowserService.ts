@@ -31,7 +31,7 @@ export class SftpBrowserService {
     },
   ): Promise<DirectoryListing> {
     const path = normalizeRemotePath(requestedPath);
-    const lease = await this.pool.acquire(connectionId, options.cancellation);
+    const lease = await this.pool.acquire(connectionId, options.cancellation, 'interactive');
     try {
       const entries = await this.cache.loadDirectory(
         connectionId,
@@ -50,7 +50,7 @@ export class SftpBrowserService {
 
   async resolveExplicitLink(connectionId: ConnectionId, requestedPath: string): Promise<string> {
     const path = normalizeRemotePath(requestedPath);
-    const lease = await this.pool.acquire(connectionId);
+    const lease = await this.pool.acquire(connectionId, undefined, 'interactive');
     try {
       const stat = await lease.client.lstat(path);
       if (stat.kind !== 'symbolicLink') return path;

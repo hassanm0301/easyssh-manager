@@ -243,7 +243,7 @@ export class RemoteSftpFileSystemProvider implements vscode.FileSystemProvider, 
     connectionId: string,
     operation: (client: import('./ports').SftpClient) => Promise<T>,
   ): Promise<T> {
-    const lease = await this.pool.acquire(connectionId);
+    const lease = await this.pool.acquire(connectionId, undefined, 'editor');
     try {
       return await operation(lease.client);
     } finally {

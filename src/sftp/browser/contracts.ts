@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import { EasySshError } from '../../common/errors';
 import type { RemoteEntryKind } from '../ports';
 import { normalizeRemotePath } from '../SftpUriCodec';
+import { validateWorkspaceDragPayload, type WorkspaceDragPayload } from '../WorkspaceUploadService';
 
 export const SFTP_PANEL_STATE_VERSION = 1 as const;
 export const MAX_REQUEST_ID_LENGTH = 80;
@@ -62,6 +63,16 @@ export type SftpRequest =
     }
   | { readonly requestId: string; readonly type: 'delete'; readonly path: string }
   | { readonly requestId: string; readonly type: 'download'; readonly paths: readonly string[] }
+  | { readonly requestId: string; readonly type: 'workspaceRefresh' }
+  | { readonly requestId: string; readonly type: 'workspaceExpand'; readonly uri: string }
+  | {
+      readonly requestId: string;
+      readonly type: 'workspaceDrop';
+      readonly targetPath: string;
+      readonly payload: WorkspaceDragPayload;
+    }
+  | { readonly requestId: string; readonly type: 'uploadFiles'; readonly targetPath: string }
+  | { readonly requestId: string; readonly type: 'uploadFolder'; readonly targetPath: string }
   | { readonly requestId: string; readonly type: 'copyPath'; readonly path: string }
   | { readonly requestId: string; readonly type: 'back' }
   | { readonly requestId: string; readonly type: 'forward' }
@@ -131,6 +142,31 @@ export function validateSftpRequest(value: unknown): SftpRequest {
         requestId: value.requestId,
         type: 'download',
         paths: value.paths.map((path) => requestPath(path)),
+      };
+    case 'workspaceRefresh':
+      exactKeys(value, ['requestId', 'type']);
+      return { requestId: value.requestId, type: 'workspaceRefresh' };
+    case 'workspaceExpand':
+      exactKeys(value, ['requestId', 'type', 'uri']);
+      if (typeof value.uri !== 'string' || value.uri.length === 0 || value.uri.length > 8_192) {
+        invalidRequest();
+      }
+      return { requestId: value.requestId, type: 'workspaceExpand', uri: value.uri };
+    case 'workspaceDrop':
+      exactKeys(value, ['requestId', 'type', 'targetPath', 'payload']);
+      return {
+        requestId: value.requestId,
+        type: 'workspaceDrop',
+        targetPath: requestPath(value.targetPath),
+        payload: validateWorkspaceDragPayload(value.payload),
+      };
+    case 'uploadFiles':
+    case 'uploadFolder':
+      exactKeys(value, ['requestId', 'type', 'targetPath']);
+      return {
+        requestId: value.requestId,
+        type: value.type,
+        targetPath: requestPath(value.targetPath),
       };
     case 'back':
     case 'forward':

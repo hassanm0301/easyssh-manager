@@ -18,7 +18,8 @@ export type ErrorCode =
   | 'TIMEOUT'
   | 'CONNECTION_LOST'
   | 'CANCELLED'
-  | 'OUTPUT_LIMIT';
+  | 'OUTPUT_LIMIT'
+  | 'WORKSPACE_UNTRUSTED';
 
 export class EasySshError extends Error {
   constructor(

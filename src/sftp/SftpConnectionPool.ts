@@ -9,6 +9,7 @@ import type {
   SftpClientFactory,
   SftpConnectionPool,
   SftpLease,
+  SftpOperationPriority,
 } from './ports';
 
 interface PoolConfiguration {
@@ -30,7 +31,19 @@ interface PoolEntry {
   invalidated: boolean;
   idleSince?: number;
   idleTimer?: NodeJS.Timeout;
+  runningOperations: number;
+  nextOperationOrder: number;
+  readonly queuedOperations: QueuedOperation[];
 }
+
+interface QueuedOperation {
+  readonly priority: number;
+  readonly order: number;
+  execute(): Promise<void>;
+  cancel(): void;
+}
+
+const MAX_CONCURRENT_OPERATIONS = 6;
 
 export class DefaultSftpConnectionPool implements SftpConnectionPool {
   private readonly entries = new Map<ConnectionId, PoolEntry>();
@@ -49,6 +62,7 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
   async acquire(
     connectionId: ConnectionId,
     cancellation?: CancellationTokenLike,
+    priority: SftpOperationPriority = 'interactive',
   ): Promise<SftpLease> {
     this.assertActive();
     if (cancellation?.isCancellationRequested) throw cancelled();
@@ -61,7 +75,7 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
         throw new EasySshError('CONNECTION_LOST', 'The pooled SFTP connection was invalidated.');
       }
       entry.references += 1;
-      return new DefaultSftpLease(this, entry, client);
+      return new DefaultSftpLease(this, entry, client, priority);
     } finally {
       entry.waiters -= 1;
       this.scheduleIdle(entry);
@@ -104,18 +118,41 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
     }
   }
 
-  async run<T>(entry: PoolEntry, operation: () => Promise<T>): Promise<T> {
+  async run<T>(
+    entry: PoolEntry,
+    priority: SftpOperationPriority,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     if (entry.invalidated || this.entries.get(entry.connectionId) !== entry) {
       throw new EasySshError('CONNECTION_LOST', 'The pooled SFTP connection is no longer active.');
     }
-    try {
-      return await operation();
-    } catch (error) {
-      if (error instanceof EasySshError && error.code === 'CONNECTION_LOST') {
-        await this.invalidateEntry(entry);
-      }
-      throw error;
-    }
+    return new Promise<T>((resolve, reject) => {
+      entry.queuedOperations.push({
+        priority: priorityValue(priority),
+        order: entry.nextOperationOrder++,
+        execute: async () => {
+          try {
+            if (entry.invalidated || this.entries.get(entry.connectionId) !== entry) {
+              throw new EasySshError(
+                'CONNECTION_LOST',
+                'The pooled SFTP connection is no longer active.',
+              );
+            }
+            resolve(await operation());
+          } catch (error) {
+            if (error instanceof EasySshError && error.code === 'CONNECTION_LOST') {
+              await this.invalidateEntry(entry);
+            }
+            reject(error);
+          }
+        },
+        cancel: () =>
+          reject(
+            new EasySshError('CONNECTION_LOST', 'The pooled SFTP connection was invalidated.'),
+          ),
+      });
+      this.drainOperations(entry);
+    });
   }
 
   async closeLeaseClient(entry: PoolEntry): Promise<void> {
@@ -132,6 +169,9 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
       references: 0,
       waiters: 0,
       invalidated: false,
+      runningOperations: 0,
+      nextOperationOrder: 0,
+      queuedOperations: [],
     };
     this.entries.set(connectionId, created);
     return created;
@@ -176,6 +216,10 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
     entry.invalidated = true;
     this.clearIdle(entry);
     entry.cancellation.cancel();
+    const pending = entry.queuedOperations.splice(0);
+    for (const queued of pending) {
+      queued.cancel();
+    }
     const client = entry.client;
     delete entry.client;
     const connecting = entry.connecting;
@@ -225,6 +269,25 @@ export class DefaultSftpConnectionPool implements SftpConnectionPool {
     }
   }
 
+  private drainOperations(entry: PoolEntry): void {
+    if (entry.invalidated) return;
+    while (
+      entry.runningOperations < MAX_CONCURRENT_OPERATIONS &&
+      entry.queuedOperations.length > 0
+    ) {
+      entry.queuedOperations.sort(
+        (left, right) => left.priority - right.priority || left.order - right.order,
+      );
+      const next = entry.queuedOperations.shift();
+      if (!next) return;
+      entry.runningOperations += 1;
+      void next.execute().finally(() => {
+        entry.runningOperations = Math.max(0, entry.runningOperations - 1);
+        this.drainOperations(entry);
+      });
+    }
+  }
+
   private assertActive(): void {
     if (this.disposed) throw new EasySshError('CONNECTION_LOST', 'The SFTP pool is disposed.');
   }
@@ -238,8 +301,15 @@ class DefaultSftpLease implements SftpLease {
     private readonly pool: DefaultSftpConnectionPool,
     private readonly entry: PoolEntry,
     underlyingClient: SftpClient,
+    priority: SftpOperationPriority,
   ) {
-    this.client = new LeasedSftpClient(pool, entry, underlyingClient, () => this.disposed);
+    this.client = new LeasedSftpClient(
+      pool,
+      entry,
+      underlyingClient,
+      () => this.disposed,
+      priority,
+    );
   }
 
   get connectionId(): ConnectionId {
@@ -263,6 +333,7 @@ class LeasedSftpClient implements SftpClient {
     private readonly entry: PoolEntry,
     private readonly client: SftpClient,
     private readonly leaseDisposed: () => boolean,
+    private readonly priority: SftpOperationPriority,
   ) {}
 
   lstat(path: string): Promise<RemoteStat> {
@@ -286,6 +357,18 @@ class LeasedSftpClient implements SftpClient {
   writeFile(path: string, data: Uint8Array, options: RemoteWriteOptions): Promise<void> {
     return this.execute(() => this.client.writeFile(path, data, options));
   }
+  createWriteStream(path: string, options: RemoteWriteOptions): import('node:stream').Writable {
+    if (!this.client.createWriteStream) {
+      throw new EasySshError(
+        'UNSUPPORTED',
+        'Streaming upload is not available for this SFTP connection.',
+      );
+    }
+    if (this.leaseDisposed()) {
+      throw new EasySshError('CONNECTION_LOST', 'The SFTP lease has already been released.');
+    }
+    return this.client.createWriteStream(path, options);
+  }
   mkdir(path: string): Promise<void> {
     return this.execute(() => this.client.mkdir(path));
   }
@@ -308,8 +391,12 @@ class LeasedSftpClient implements SftpClient {
         new EasySshError('CONNECTION_LOST', 'The SFTP lease has already been released.'),
       );
     }
-    return this.pool.run(this.entry, operation);
+    return this.pool.run(this.entry, this.priority, operation);
   }
+}
+
+function priorityValue(priority: SftpOperationPriority): number {
+  return priority === 'editor' ? 0 : priority === 'interactive' ? 1 : 2;
 }
 
 class PoolCancellationTokenSource {

@@ -1,5 +1,6 @@
 import type { ConnectionId } from '../connections/types';
 import type * as vscode from 'vscode';
+import type { Writable } from 'node:stream';
 import type { CancellationTokenLike } from '../ssh/ports';
 
 export interface ParsedSftpUri {
@@ -51,6 +52,8 @@ export interface SftpClientFactory {
   open(connectionId: ConnectionId, cancellation?: CancellationTokenLike): Promise<SftpClient>;
 }
 
+export type SftpOperationPriority = 'editor' | 'interactive' | 'background';
+
 export interface SftpLease {
   readonly connectionId: ConnectionId;
   readonly client: SftpClient;
@@ -59,7 +62,11 @@ export interface SftpLease {
 }
 
 export interface SftpConnectionPool {
-  acquire(connectionId: ConnectionId, cancellation?: CancellationTokenLike): Promise<SftpLease>;
+  acquire(
+    connectionId: ConnectionId,
+    cancellation?: CancellationTokenLike,
+    priority?: SftpOperationPriority,
+  ): Promise<SftpLease>;
   invalidate(connectionId: ConnectionId, reason: string): Promise<void>;
   disposeAll(): Promise<void>;
 }
@@ -72,6 +79,11 @@ export interface SftpClient {
   readDirectory(path: string): Promise<RemoteDirectoryEntry[]>;
   readFile(path: string, range?: { offset: number; length: number }): Promise<Uint8Array>;
   writeFile(path: string, data: Uint8Array, options: RemoteWriteOptions): Promise<void>;
+  /**
+   * Optional streaming write support. Older/test adapters may omit it; callers
+   * must retain a bounded-buffer fallback for virtual resources.
+   */
+  createWriteStream?(path: string, options: RemoteWriteOptions): Writable;
   mkdir(path: string): Promise<void>;
   rename(source: string, target: string, overwrite: boolean): Promise<void>;
   unlink(path: string): Promise<void>;

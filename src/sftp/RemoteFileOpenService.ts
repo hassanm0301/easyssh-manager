@@ -28,7 +28,7 @@ export class RemoteFileOpenService {
 
   async open(uri: vscode.Uri): Promise<void> {
     const { connectionId, remotePath } = this.codec.parse(uri);
-    const lease = await this.pool.acquire(connectionId);
+    const lease = await this.pool.acquire(connectionId, undefined, 'editor');
     try {
       const stat = await lease.client.stat(remotePath);
       if (stat.kind === 'directory') {

@@ -31,6 +31,7 @@ import { SftpBrowserService } from '../sftp/SftpBrowserService';
 import { SessionSftpClientFactory } from '../sftp/SftpClientFactory';
 import { DefaultSftpConnectionPool } from '../sftp/SftpConnectionPool';
 import { DefaultSftpUriCodec } from '../sftp/SftpUriCodec';
+import { WorkspacePaneService, WorkspaceUploadService } from '../sftp/WorkspaceUploadService';
 import { ConnectionEditor } from '../views/connections/ConnectionEditor';
 import { ImportPreview, type ImportSelection } from '../views/connections/ImportPreview';
 import { SftpPanelManager } from '../views/sftp/SftpPanel';
@@ -58,6 +59,7 @@ export class ExtensionApplication implements vscode.Disposable {
   private readonly sftpProvider: RemoteSftpFileSystemProvider;
   private readonly remoteFileOpener: RemoteFileOpenService;
   private readonly sftpPanels: SftpPanelManager;
+  private readonly workspaceUploads: WorkspaceUploadService;
   private readonly knownConnectionIds = new Set<string>();
   private readonly terminals: SshTerminalRegistry;
   private readonly connectionTester: TestConnectionService;
@@ -148,6 +150,16 @@ export class ExtensionApplication implements vscode.Disposable {
     const downloads = new DownloadService(vscodeApi, this.sftpPool, {
       maxBufferedTransferMiB: () => this.configuration.getSnapshot().maxBufferedTransferMiB,
     });
+    this.workspaceUploads = this.disposables.add(
+      new WorkspaceUploadService(
+        vscodeApi,
+        this.sftpPool,
+        this.sftpCache,
+        this.sftpUriCodec,
+        this.sftpProvider,
+        { maxBufferedTransferMiB: () => this.configuration.getSnapshot().maxBufferedTransferMiB },
+      ),
+    );
     this.sftpPanels = this.disposables.add(
       new SftpPanelManager({
         vscodeApi,
@@ -158,6 +170,8 @@ export class ExtensionApplication implements vscode.Disposable {
         remoteFileOpener: this.remoteFileOpener,
         codec: this.sftpUriCodec,
         pool: this.sftpPool,
+        uploads: this.workspaceUploads,
+        createWorkspacePane: () => new WorkspacePaneService(vscodeApi),
         resolveConnection: async (connectionId) =>
           (await this.state.load()).connections.find(
             (connection) => connection.id === connectionId,
@@ -445,6 +459,20 @@ export class ExtensionApplication implements vscode.Disposable {
       },
     });
     this.commands.register({
+      id: 'easysshManager.uploadFiles',
+      execute: async () => {
+        const summary = await this.sftpPanels.uploadFromCommand('files');
+        void this.vscodeApi.window.showInformationMessage(uploadSummaryMessage(summary));
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.uploadFolder',
+      execute: async () => {
+        const summary = await this.sftpPanels.uploadFromCommand('folder');
+        void this.vscodeApi.window.showInformationMessage(uploadSummaryMessage(summary));
+      },
+    });
+    this.commands.register({
       id: 'easysshManager.openRemoteFile',
       execute: async (value: unknown) => {
         if (value === undefined) {
@@ -619,6 +647,12 @@ function collectFolderIds(
     }
   }
   return found;
+}
+
+function uploadSummaryMessage(
+  summary: import('../sftp/WorkspaceUploadService').TransferSummary,
+): string {
+  return `Upload complete: ${summary.uploaded} files uploaded, ${summary.createdDirectories} directories created, ${summary.skipped.length + summary.skippedLinks.length} skipped, ${summary.failed.length} failed${summary.cancelled ? ', cancelled' : ''}.`;
 }
 
 function normalizedHost(value: string): string {

@@ -21,6 +21,20 @@ type View = {
   readonly canGoUp: boolean;
   readonly sort: { readonly key: 'name' | 'size' | 'mtime'; readonly direction: 'asc' | 'desc' };
   readonly connection: { readonly state: string; readonly text: string };
+  readonly workspace: WorkspaceView;
+};
+
+type WorkspaceView = {
+  readonly generation: number;
+  readonly state: 'ready' | 'untrusted' | 'noWorkspace';
+  readonly message?: string;
+  readonly roots: readonly WorkspaceEntry[];
+};
+
+type WorkspaceEntry = {
+  readonly name: string;
+  readonly uri: string;
+  readonly kind?: 'file' | 'directory' | 'symbolicLink' | 'other';
 };
 
 const vscode = acquireVsCodeApi();
@@ -37,11 +51,18 @@ const empty = byId<HTMLElement>('empty');
 const error = byId<HTMLElement>('error');
 const menu = byId<HTMLElement>('menu');
 const more = byId<HTMLButtonElement>('more');
+const workspaceRoots = byId<HTMLElement>('workspace-roots');
+const workspaceState = byId<HTMLElement>('workspace-state');
 
 let view: View | undefined;
 let selected = new Set<string>();
 let activeIndex = 0;
 let sequence = 0;
+const workspaceChildren = new Map<string, readonly WorkspaceEntry[]>();
+const workspaceErrors = new Map<string, string>();
+const expandedWorkspace = new Set<string>();
+let workspaceGeneration = -1;
+let workspaceSelected = new Set<string>();
 
 function send(message: Record<string, unknown>): void {
   sequence += 1;
@@ -91,6 +112,114 @@ function render(next: View): void {
   error.textContent = error.hidden ? '' : next.connection.text;
   const selectedAny = selected.size > 0;
   byId<HTMLButtonElement>('download').disabled = !selectedAny;
+  renderWorkspace(next.workspace);
+}
+
+function renderWorkspace(next: WorkspaceView): void {
+  if (workspaceGeneration !== next.generation) {
+    workspaceGeneration = next.generation;
+    workspaceChildren.clear();
+    workspaceErrors.clear();
+    expandedWorkspace.clear();
+    workspaceSelected.clear();
+  }
+  workspaceRoots.replaceChildren();
+  workspaceState.textContent = next.message ?? '';
+  byId<HTMLButtonElement>('workspace-refresh').disabled = next.state === 'untrusted';
+  if (next.state !== 'ready') return;
+  next.roots.forEach((root) => workspaceRoots.append(workspaceItem(root, 0)));
+}
+
+function workspaceItem(entry: WorkspaceEntry, depth: number): HTMLElement {
+  const item = document.createElement('div');
+  item.className = 'workspace-entry';
+  item.setAttribute('role', 'treeitem');
+  item.style.paddingInlineStart = `${depth * 1.25}rem`;
+  const isDirectory = entry.kind === undefined || entry.kind === 'directory';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'workspace-toggle';
+  toggle.disabled = !isDirectory;
+  toggle.textContent = isDirectory ? (expandedWorkspace.has(entry.uri) ? '▾' : '▸') : '·';
+  toggle.setAttribute(
+    'aria-label',
+    isDirectory ? `Expand ${entry.name}` : `${entry.name} is a file`,
+  );
+  toggle.addEventListener('click', () => {
+    if (!isDirectory) return;
+    if (expandedWorkspace.has(entry.uri)) {
+      expandedWorkspace.delete(entry.uri);
+    } else {
+      expandedWorkspace.add(entry.uri);
+      command('workspaceExpand', { uri: entry.uri });
+    }
+    if (view) renderWorkspace(view.workspace);
+  });
+  const label = document.createElement('span');
+  label.textContent = `${workspaceKindLabel(entry.kind)} ${entry.name}`;
+  label.draggable = true;
+  label.tabIndex = 0;
+  label.setAttribute('aria-selected', String(workspaceSelected.has(entry.uri)));
+  label.addEventListener('click', (event) =>
+    chooseWorkspace(entry.uri, event.ctrlKey || event.metaKey),
+  );
+  label.addEventListener('keydown', (event) => {
+    if (event.key !== ' ' && event.key !== 'Enter') return;
+    chooseWorkspace(entry.uri, event.ctrlKey || event.metaKey);
+    event.preventDefault();
+  });
+  label.addEventListener('dragstart', (event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
+    transfer.effectAllowed = 'copy';
+    transfer.setData(
+      'application/x-easyssh-workspace-items',
+      JSON.stringify({
+        type: 'workspace-items',
+        uris: workspaceSelected.has(entry.uri) ? [...workspaceSelected] : [entry.uri],
+      }),
+    );
+    transfer.setData('text/plain', 'EasySSH workspace item');
+  });
+  item.append(toggle, label);
+  if (isDirectory && expandedWorkspace.has(entry.uri)) {
+    const children = workspaceChildren.get(entry.uri);
+    if (children) {
+      const group = document.createElement('div');
+      group.setAttribute('role', 'group');
+      children.forEach((child) => group.append(workspaceItem(child, depth + 1)));
+      item.append(group);
+      if (children.length === 0) item.append(document.createTextNode(' Empty folder'));
+    } else if (workspaceErrors.has(entry.uri)) {
+      const failure = document.createElement('span');
+      failure.setAttribute('role', 'alert');
+      failure.textContent = ` ${workspaceErrors.get(entry.uri)}`;
+      item.append(failure);
+    } else {
+      item.append(document.createTextNode(' Loading…'));
+    }
+  }
+  return item;
+}
+
+function chooseWorkspace(uri: string, additive: boolean): void {
+  if (additive) {
+    if (workspaceSelected.has(uri)) workspaceSelected.delete(uri);
+    else workspaceSelected.add(uri);
+  } else {
+    workspaceSelected = new Set([uri]);
+  }
+  if (view) renderWorkspace(view.workspace);
+}
+
+function workspaceKindLabel(kind: WorkspaceEntry['kind']): string {
+  return kind === 'directory' || kind === undefined
+    ? 'Folder'
+    : kind === 'symbolicLink'
+      ? 'Link'
+      : kind === 'file'
+        ? 'File'
+        : 'Other';
 }
 
 function row(entry: Entry, index: number): HTMLElement {
@@ -116,7 +245,35 @@ function row(entry: Entry, index: number): HTMLElement {
     showMenu(item);
   });
   item.addEventListener('keydown', (event) => keydown(event, index));
+  addWorkspaceDropTarget(item, entry.path);
   return item;
+}
+
+function addWorkspaceDropTarget(target: HTMLElement, targetPath: string): void {
+  target.addEventListener('dragover', (event) => {
+    if (!hasWorkspacePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  });
+  target.addEventListener('drop', (event) => {
+    const payload = workspacePayload(event.dataTransfer);
+    if (!payload) return;
+    event.preventDefault();
+    command('workspaceDrop', { targetPath, payload });
+  });
+}
+
+function hasWorkspacePayload(transfer: DataTransfer | null): boolean {
+  return transfer?.types.includes('application/x-easyssh-workspace-items') ?? false;
+}
+
+function workspacePayload(transfer: DataTransfer | null): unknown {
+  if (!hasWorkspacePayload(transfer)) return undefined;
+  try {
+    return JSON.parse(transfer?.getData('application/x-easyssh-workspace-items') ?? '');
+  } catch {
+    return undefined;
+  }
 }
 
 function choose(path: string, index: number): void {
@@ -237,14 +394,26 @@ for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[d
     command('setSort', { key, direction });
   });
 }
-for (const button of [
-  byId<HTMLButtonElement>('upload-files'),
-  byId<HTMLButtonElement>('upload-folder'),
-]) {
-  button.addEventListener('click', () => {
-    status.replaceChildren(document.createTextNode('Upload will be available in Milestone 06.'));
-  });
-}
+byId<HTMLButtonElement>('upload-files').addEventListener('click', () =>
+  command('uploadFiles', { targetPath: selectedEntry()?.path ?? view?.path ?? '/' }),
+);
+byId<HTMLButtonElement>('upload-folder').addEventListener('click', () =>
+  command('uploadFolder', { targetPath: selectedEntry()?.path ?? view?.path ?? '/' }),
+);
+byId<HTMLButtonElement>('workspace-refresh').addEventListener('click', () =>
+  command('workspaceRefresh'),
+);
+list.addEventListener('dragover', (event) => {
+  if (!hasWorkspacePayload(event.dataTransfer)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+});
+list.addEventListener('drop', (event) => {
+  const payload = workspacePayload(event.dataTransfer);
+  if (!payload) return;
+  event.preventDefault();
+  command('workspaceDrop', { targetPath: view?.path ?? '/', payload });
+});
 more.addEventListener('click', () => {
   if (menu.hidden) showMenu(more);
   else hideMenu(true);
@@ -271,9 +440,27 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('message', (event: MessageEvent<unknown>) => {
   const message = event.data;
   if (message === null || typeof message !== 'object') return;
-  const typed = message as { type?: unknown; value?: unknown };
+  const typed = message as {
+    type?: unknown;
+    value?: unknown;
+    uri?: unknown;
+    entries?: unknown;
+    error?: unknown;
+  };
   if (typed.type === 'render' && isView(typed.value)) render(typed.value);
   if (typed.type === 'persist') vscode.setState(typed.value);
+  if (typed.type === 'workspaceChildren' && isWorkspaceChildren(message)) {
+    workspaceChildren.set(message.uri, message.entries);
+    if (view) renderWorkspace(view.workspace);
+  }
+  if (
+    typed.type === 'workspaceError' &&
+    typeof typed.uri === 'string' &&
+    typeof typed.error === 'string'
+  ) {
+    workspaceErrors.set(typed.uri, typed.error);
+    if (view) renderWorkspace(view.workspace);
+  }
   if (typed.type === 'response') renderResponse(message as SftpResponseMessage);
 });
 
@@ -281,6 +468,18 @@ function isView(value: unknown): value is View {
   return (
     value !== null &&
     typeof value === 'object' &&
+    Array.isArray((value as { entries?: unknown }).entries) &&
+    (value as { workspace?: unknown }).workspace !== undefined
+  );
+}
+
+function isWorkspaceChildren(
+  value: unknown,
+): value is { readonly uri: string; readonly entries: readonly WorkspaceEntry[] } {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { uri?: unknown }).uri === 'string' &&
     Array.isArray((value as { entries?: unknown }).entries)
   );
 }
@@ -307,6 +506,13 @@ function renderResponse(response: SftpResponseMessage): void {
       ),
     );
   }
+  if (isTransferSummary(response.value)) {
+    status.replaceChildren(
+      document.createTextNode(
+        `Upload complete: ${response.value.uploaded} uploaded, ${response.value.createdDirectories} directories created, ${response.value.skipped.length + response.value.skippedLinks.length} skipped, ${response.value.failed.length} failed${response.value.cancelled ? ', cancelled' : ''}.`,
+      ),
+    );
+  }
 }
 
 function isDownloadSummary(value: unknown): value is {
@@ -320,6 +526,26 @@ function isDownloadSummary(value: unknown): value is {
     typeof value === 'object' &&
     typeof (value as { completed?: unknown }).completed === 'number' &&
     Array.isArray((value as { skipped?: unknown }).skipped) &&
+    Array.isArray((value as { failed?: unknown }).failed) &&
+    typeof (value as { cancelled?: unknown }).cancelled === 'boolean'
+  );
+}
+
+function isTransferSummary(value: unknown): value is {
+  readonly uploaded: number;
+  readonly createdDirectories: number;
+  readonly skipped: readonly unknown[];
+  readonly skippedLinks: readonly unknown[];
+  readonly failed: readonly unknown[];
+  readonly cancelled: boolean;
+} {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { uploaded?: unknown }).uploaded === 'number' &&
+    typeof (value as { createdDirectories?: unknown }).createdDirectories === 'number' &&
+    Array.isArray((value as { skipped?: unknown }).skipped) &&
+    Array.isArray((value as { skippedLinks?: unknown }).skippedLinks) &&
     Array.isArray((value as { failed?: unknown }).failed) &&
     typeof (value as { cancelled?: unknown }).cancelled === 'boolean'
   );

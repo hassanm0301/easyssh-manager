@@ -95,7 +95,7 @@ export class DownloadService {
     const roots = [...new Set(sources.map((source) => normalizeRemotePath(source)))];
     const items: PlannedDownload[] = [];
     let totalBytes = 0;
-    const lease = await this.pool.acquire(connectionId);
+    const lease = await this.pool.acquire(connectionId, undefined, 'background');
     try {
       for (const root of roots) {
         const rootName = posix.basename(root);
@@ -229,7 +229,7 @@ export class DownloadService {
         };
         const decisions: ConflictState = { overwriteAll: false, skipAll: false };
         const skippedTrees = new Set<string>();
-        const lease = await this.pool.acquire(connectionId);
+        const lease = await this.pool.acquire(connectionId, undefined, 'background');
         try {
           for (const item of plan.items) {
             if (token.isCancellationRequested) {
