@@ -300,6 +300,7 @@
     "test:unit": "vitest run src/test/unit",
     "test:integration": "vitest run src/test/integration",
     "test:extension": "npm run build && env -u ELECTRON_RUN_AS_NODE tsx src/test/extension/runTest.ts",
+    "test:acceptance": "EASYSSH_RUN_DOCKER=1 npm run test:extension",
     "coverage": "vitest run --coverage",
     "build": "npm run build:production",
     "build:development": "node scripts/build.mjs --development",

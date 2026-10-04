@@ -8,11 +8,15 @@ export function run(): Promise<void> {
     ui: 'tdd',
     color: true,
     timeout:
-      Number.isFinite(acceptancePause) && acceptancePause > 0
-        ? acceptancePause + defaultTimeout
-        : defaultTimeout,
+      process.env.EASYSSH_RUN_DOCKER === '1'
+        ? 120_000
+        : Number.isFinite(acceptancePause) && acceptancePause > 0
+          ? acceptancePause + defaultTimeout
+          : defaultTimeout,
   });
   mocha.addFile(path.resolve(__dirname, 'extension.test.js'));
+  if (process.env.EASYSSH_RUN_DOCKER === '1')
+    mocha.addFile(path.resolve(__dirname, 'sftp-acceptance.test.js'));
   return new Promise((resolve, reject) => {
     try {
       mocha.run((failures) => {

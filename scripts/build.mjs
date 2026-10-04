@@ -43,6 +43,10 @@ const extensionHost = {
       root,
       'src/test/extension/suite/extension.test.ts',
     ),
+    'test/extension/suite/sftp-acceptance.test': resolve(
+      root,
+      'src/test/extension/suite/sftp-acceptance.test.ts',
+    ),
   },
   outdir,
 };

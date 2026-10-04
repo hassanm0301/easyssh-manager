@@ -1,4 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect as connectSocket, createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -24,6 +25,14 @@ import {
 import { SshClientFactory } from '../../ssh/SshClientFactory';
 import { DefaultSshSessionManager } from '../../ssh/SshSessionManager';
 import { TestConnectionService } from '../../ssh/TestConnectionService';
+import { AtomicSftpWriter } from '../../sftp/AtomicSftpWriter';
+import { RemoteResourceCache } from '../../sftp/RemoteResourceCache';
+import { SessionSftpClientFactory } from '../../sftp/SftpClientFactory';
+import { DefaultSftpConnectionPool } from '../../sftp/SftpConnectionPool';
+import { DefaultSftpUriCodec, type SftpUriComponents } from '../../sftp/SftpUriCodec';
+import { Ssh2SftpClient } from '../../sftp/Ssh2SftpClient';
+import type { SftpClient } from '../../sftp/ports';
+import type * as vscode from 'vscode';
 
 const enabled = process.env.EASYSSH_RUN_DOCKER === '1';
 const docker = describe.runIf(enabled).sequential;
@@ -102,6 +111,7 @@ docker('Docker SSH transport', () => {
     );
     credentials.passwords.set(passwordProfile.id, password);
     credentials.passphrases.set(encryptedKeyProfile.id, keyPassphrase);
+    createSftpFixture(container);
     manager = makeManager(state, credentials, trust, { SSH_AUTH_SOCK: agentSocket });
   }, 120_000);
 
@@ -159,6 +169,184 @@ docker('Docker SSH transport', () => {
     ).rejects.toMatchObject({
       code: 'MISSING_CREDENTIAL',
     });
+  });
+
+  it('performs real SFTP stat, link, listing, range-read, and CRUD operations', async () => {
+    const first = await openSftpClient(manager, passwordProfile.id, 'sftp-domain-first');
+    const second = await openSftpClient(manager, passwordProfile.id, 'sftp-domain-second');
+    const root = '/home/easyssh-test/sftp-fixture';
+    try {
+      await expect(first.client.lstat(`${root}/text.txt`)).resolves.toMatchObject({
+        kind: 'file',
+        size: 14,
+        mtimeMs: 1_700_000_000_000,
+      });
+      await expect(first.client.lstat(`${root}/link-to-text`)).resolves.toMatchObject({
+        kind: 'symbolicLink',
+      });
+      await expect(first.client.stat(`${root}/link-to-text`)).resolves.toMatchObject({
+        kind: 'file',
+      });
+      await expect(first.client.lstat(`${root}/broken-link`)).resolves.toMatchObject({
+        kind: 'symbolicLink',
+      });
+      await expect(first.client.stat(`${root}/broken-link`)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+      await expect(first.client.readlink(`${root}/link-to-text`)).resolves.toBe('text.txt');
+      await expect(first.client.realpath(`${root}/link-to-text`)).resolves.toBe(`${root}/text.txt`);
+      const names = (await first.client.readDirectory(root)).map(({ name }) => name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          'text.txt',
+          'directory',
+          'link-to-text',
+          'broken-link',
+          'unicodé-世界.txt',
+          'binary.bin',
+          'large.bin',
+        ]),
+      );
+      await expect(
+        first.client.readFile(`${root}/text.txt`, { offset: 6, length: 7 }),
+      ).resolves.toEqual(Buffer.from('fixture'));
+      await expect(first.client.readFile(`${root}/denied.txt`)).rejects.toMatchObject({
+        code: 'PERMISSION_DENIED',
+      });
+
+      await first.client.mkdir(`${root}/created-directory`);
+      await first.client.writeFile(`${root}/created.txt`, Buffer.from('created'), {
+        create: true,
+        overwrite: false,
+      });
+      await expect(second.client.readFile(`${root}/created.txt`)).resolves.toEqual(
+        Buffer.from('created'),
+      );
+      await first.client.writeFile(`${root}/created.txt`, Buffer.from('overwritten'), {
+        create: false,
+        overwrite: true,
+      });
+      await first.client.rename(`${root}/created.txt`, `${root}/renamed.txt`, false);
+      await expect(second.client.readFile(`${root}/renamed.txt`)).resolves.toEqual(
+        Buffer.from('overwritten'),
+      );
+      await first.client.unlink(`${root}/renamed.txt`);
+      await first.client.rmdir(`${root}/created-directory`);
+      await expect(second.client.lstat(`${root}/renamed.txt`)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
+  it('reuses one real pooled subsystem, expires it idle, and reconnects only on a new acquire', async () => {
+    const configuration = new PoolConfiguration(150);
+    const pool = new DefaultSftpConnectionPool(
+      new SessionSftpClientFactory(manager, () => settings.connectTimeoutMs),
+      configuration,
+    );
+    const root = '/home/easyssh-test/sftp-fixture';
+    try {
+      const [first, second] = await Promise.all([
+        pool.acquire(passwordProfile.id),
+        pool.acquire(passwordProfile.id),
+      ]);
+      expect(manager.activeConnectionCount).toBe(1);
+      await Promise.all([
+        first.client.readFile(`${root}/text.txt`),
+        second.client.readFile(`${root}/unicodé-世界.txt`),
+      ]);
+      await first[Symbol.asyncDispose]();
+      expect(manager.activeConnectionCount).toBe(1);
+      await second[Symbol.asyncDispose]();
+      await waitUntil(() => manager.activeConnectionCount === 0, 2_000);
+
+      const reconnected = await pool.acquire(passwordProfile.id);
+      expect(manager.activeConnectionCount).toBe(1);
+      await pool.invalidate(passwordProfile.id, 'integration forced invalidation');
+      expect(manager.activeConnectionCount).toBe(0);
+      const next = await pool.acquire(passwordProfile.id);
+      expect(manager.activeConnectionCount).toBe(1);
+      await next[Symbol.asyncDispose]();
+      await reconnected[Symbol.asyncDispose]();
+    } finally {
+      await pool.disposeAll();
+    }
+    expect(manager.activeConnectionCount).toBe(0);
+  });
+
+  it('performs atomic conflict-aware saves and preserves the prior file on mid-upload disconnect', async () => {
+    const root = '/home/easyssh-test/sftp-fixture';
+    const target = `${root}/atomic.txt`;
+    const uriCodec = integrationUriCodec(passwordProfile.id);
+    const uri = uriCodec.create(passwordProfile.id, target);
+    const cache = new RemoteResourceCache(uriCodec);
+    let overwrite = false;
+    const writer = new AtomicSftpWriter(
+      uriCodec,
+      cache,
+      {
+        confirmOverwrite: async () => overwrite,
+        confirmNonAtomicOverwrite: async () => false,
+      },
+      { debug: () => undefined },
+      () => randomUUID(),
+    );
+    const first = await openSftpClient(manager, passwordProfile.id, 'atomic-first');
+    const external = await openSftpClient(manager, passwordProfile.id, 'atomic-external');
+    try {
+      await first.client.writeFile(target, Buffer.from('original'), {
+        create: true,
+        overwrite: true,
+      });
+      const original = await first.client.stat(target);
+      cache.rememberVersion(uri, { mtimeMs: original.mtimeMs, size: original.size });
+      await delay(1_100);
+      await external.client.writeFile(target, Buffer.from('external'), {
+        create: false,
+        overwrite: true,
+      });
+      await expect(
+        writer.write(uri, first.client, Buffer.from('editor'), {
+          create: false,
+          overwrite: true,
+        }),
+      ).rejects.toMatchObject({ code: 'CANCELLED' });
+      await expect(external.client.readFile(target)).resolves.toEqual(Buffer.from('external'));
+
+      overwrite = true;
+      await writer.write(uri, first.client, Buffer.from('editor'), {
+        create: false,
+        overwrite: true,
+      });
+      await expect(external.client.readFile(target)).resolves.toEqual(Buffer.from('editor'));
+    } finally {
+      await Promise.all([first.close(), external.close()]);
+    }
+
+    const interruptedHandle = await manager.connect(
+      passwordProfile.id,
+      purpose('atomic-interrupted'),
+    );
+    const subsystem = await interruptedHandle.openSftp();
+    const interrupted = new Ssh2SftpClient(subsystem.sftp, settings.connectTimeoutMs);
+    const large = Buffer.alloc(32 * 1024 * 1024, 0x61);
+    const interruptedWrite = writer.write(uri, interrupted, large, {
+      create: false,
+      overwrite: true,
+    });
+    await delay(5);
+    subsystem.sftp.emit('close');
+    await interruptedHandle[Symbol.asyncDispose]();
+    await expect(interruptedWrite).rejects.toMatchObject({ code: 'CONNECTION_LOST' });
+
+    const verifier = await openSftpClient(manager, passwordProfile.id, 'atomic-verifier');
+    try {
+      await expect(verifier.client.readFile(target)).resolves.toEqual(Buffer.from('editor'));
+    } finally {
+      await verifier.close();
+    }
   });
 
   it('reuses matching trust, blocks host-key rotation, and permits explicit replacement', async () => {
@@ -379,6 +567,90 @@ function run(command: string, args: string[], environment?: Record<string, strin
     env: environment ? { ...process.env, ...environment } : process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
+
+function createSftpFixture(container: string): void {
+  run('docker', [
+    'exec',
+    container,
+    'sh',
+    '-c',
+    [
+      'root=/home/easyssh-test/sftp-fixture',
+      'mkdir -p "$root/directory"',
+      'printf \'hello fixture\\n\' > "$root/text.txt"',
+      'printf \'unicode content\\n\' > "$root/unicodé-世界.txt"',
+      'printf \'\\000\\001\\002binary\' > "$root/binary.bin"',
+      'printf \'denied\' > "$root/denied.txt"',
+      'printf \'atomic seed\' > "$root/atomic.txt"',
+      'truncate -s 22020096 "$root/large.bin"',
+      'ln -sf text.txt "$root/link-to-text"',
+      'ln -sf missing.txt "$root/broken-link"',
+      'touch -d @1700000000 "$root/text.txt"',
+      'chown -R easyssh-test:easyssh-test "$root"',
+      'chmod 000 "$root/denied.txt"',
+    ].join(' && '),
+  ]);
+}
+
+async function openSftpClient(
+  manager: DefaultSshSessionManager,
+  connectionId: string,
+  scopeId: string,
+): Promise<{ client: SftpClient; close(): Promise<void> }> {
+  const handle = await manager.connect(connectionId, { kind: 'sftp', scopeId });
+  try {
+    const subsystem = await handle.openSftp();
+    const client = new Ssh2SftpClient(subsystem.sftp, settings.connectTimeoutMs);
+    return {
+      client,
+      close: async () => {
+        await client.close();
+        await handle[Symbol.asyncDispose]();
+      },
+    };
+  } catch (error) {
+    await handle[Symbol.asyncDispose]();
+    throw error;
+  }
+}
+
+class PoolConfiguration {
+  private readonly listeners = new Set<(value: { sftpIdleTimeoutMs: number }) => unknown>();
+  constructor(private readonly idleTimeoutMs: number) {}
+  readonly onDidChange = (listener: (value: { sftpIdleTimeoutMs: number }) => unknown) => {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  };
+  getSnapshot(): Readonly<{ sftpIdleTimeoutMs: number }> {
+    return { sftpIdleTimeoutMs: this.idleTimeoutMs };
+  }
+}
+
+function integrationUriCodec(connectionId: string): DefaultSftpUriCodec {
+  return new DefaultSftpUriCodec(
+    {
+      from: (components: SftpUriComponents) =>
+        ({
+          scheme: components.scheme,
+          authority: components.authority ?? '',
+          path: components.path ?? '',
+          query: components.query ?? '',
+          fragment: components.fragment ?? '',
+          toString: () =>
+            `${components.scheme}://${components.authority ?? ''}${components.path ?? ''}`,
+        }) as unknown as vscode.Uri,
+    },
+    (candidate) => candidate === connectionId,
+  );
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for integration condition.');
+    await delay(20);
+  }
 }
 
 function tryRun(command: string, args: string[]): void {
