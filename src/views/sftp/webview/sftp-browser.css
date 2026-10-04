@@ -1,0 +1,102 @@
+:root {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+}
+body {
+  margin: 0;
+  padding: 0.75rem;
+}
+button {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 0.3rem 0.5rem;
+}
+button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+button:focus-visible,
+[role='option']:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+button:disabled {
+  opacity: 0.55;
+}
+.toolbar {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-block-end: 0.65rem;
+}
+#breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  overflow-wrap: anywhere;
+  margin-block: 0.4rem;
+}
+#breadcrumbs button {
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+  padding: 0.15rem;
+}
+#status {
+  min-height: 1.25rem;
+}
+#list {
+  border: 1px solid var(--vscode-editorWidget-border);
+  min-height: 12rem;
+}
+.headers,
+.entry {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) 8rem 13rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+}
+.headers {
+  border-block-end: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-sideBar-background);
+}
+.headers button {
+  text-align: start;
+  background: transparent;
+  color: var(--vscode-foreground);
+}
+.entry[aria-selected='true'] {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.entry:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+#empty,
+#error {
+  padding: 0.75rem;
+}
+#error {
+  color: var(--vscode-errorForeground);
+}
+#menu {
+  position: fixed;
+  z-index: 2;
+  display: grid;
+  min-width: 12rem;
+  padding: 0.25rem;
+  background: var(--vscode-menu-background);
+  border: 1px solid var(--vscode-menu-border);
+}
+#menu button {
+  text-align: start;
+  color: var(--vscode-menu-foreground);
+  background: transparent;
+}
+@media (forced-colors: active) {
+  .entry[aria-selected='true'] {
+    outline: 2px solid Highlight;
+  }
+}

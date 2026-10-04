@@ -1,7 +1,9 @@
 import * as assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { connect as connectSocket } from 'node:net';
-import { resolve } from 'node:path';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 
@@ -22,9 +24,12 @@ import {
 import { SshClientFactory } from '../../../ssh/SshClientFactory';
 import { DefaultSshSessionManager } from '../../../ssh/SshSessionManager';
 import { AtomicSftpWriter, type AtomicWritePrompt } from '../../../sftp/AtomicSftpWriter';
+import { DownloadService } from '../../../sftp/DownloadService';
+import { RemoteMutationService } from '../../../sftp/RemoteMutationService';
 import { RemoteResourceCache } from '../../../sftp/RemoteResourceCache';
 import { RemoteSftpFileSystemProvider } from '../../../sftp/RemoteSftpFileSystemProvider';
 import { SessionSftpClientFactory } from '../../../sftp/SftpClientFactory';
+import { SftpBrowserService } from '../../../sftp/SftpBrowserService';
 import { DefaultSftpConnectionPool } from '../../../sftp/SftpConnectionPool';
 import { normalizeRemotePath } from '../../../sftp/SftpUriCodec';
 import type { ParsedSftpUri, SftpClient, SftpUriCodec } from '../../../sftp/ports';
@@ -54,6 +59,8 @@ suite('SFTP normal-editor acceptance', () => {
   let second: RemoteConnection;
   let manager: DefaultSshSessionManager;
   let pool: DefaultSftpConnectionPool;
+  let cache: RemoteResourceCache;
+  let provider: RemoteSftpFileSystemProvider;
   let registration: vscode.Disposable;
   let external: SftpClient;
 
@@ -122,11 +129,11 @@ suite('SFTP normal-editor acceptance', () => {
     );
     const sftpFactory = new SessionSftpClientFactory(manager, () => configuration.connectTimeoutMs);
     pool = new DefaultSftpConnectionPool(sftpFactory, new PoolConfiguration());
-    const cache = new RemoteResourceCache(codec);
+    cache = new RemoteResourceCache(codec);
     const writer = new AtomicSftpWriter(codec, cache, conflictPrompt, {
       debug: () => undefined,
     });
-    const provider = new RemoteSftpFileSystemProvider(vscode, codec, pool, cache, writer);
+    provider = new RemoteSftpFileSystemProvider(vscode, codec, pool, cache, writer);
     registration = vscode.workspace.registerFileSystemProvider(scheme, provider, {
       isCaseSensitive: true,
       isReadonly: false,
@@ -242,6 +249,101 @@ suite('SFTP normal-editor acceptance', () => {
       Buffer.from(await external.readFile(`${remoteRoot}/second.txt`)).toString(),
       'concurrent second\n',
     );
+  });
+
+  test('lists, refreshes, mutates, and downloads through the Milestone 5 host services', async function () {
+    this.timeout(60_000);
+    const root = `${remoteRoot}/browser-acceptance`;
+    await external.mkdir(root);
+    await external.writeFile(`${root}/external.txt`, Buffer.from('initial'), {
+      create: true,
+      overwrite: false,
+    });
+    const browser = new SftpBrowserService(pool, cache);
+    const firstListing = await browser.list(first.id, root, {
+      force: true,
+      sort: 'name',
+      direction: 'asc',
+    });
+    assert.deepEqual(
+      firstListing.entries.map((entry) => entry.name),
+      ['external.txt'],
+    );
+    await external.writeFile(`${root}/outside-change.txt`, Buffer.from('changed'), {
+      create: true,
+      overwrite: false,
+    });
+    const refreshed = await browser.list(first.id, root, {
+      force: true,
+      sort: 'name',
+      direction: 'asc',
+    });
+    assert.ok(refreshed.entries.some((entry) => entry.name === 'outside-change.txt'));
+
+    const mutations = new RemoteMutationService(
+      {
+        workspace: vscode.workspace,
+        window: {
+          tabGroups: vscode.window.tabGroups,
+          showWarningMessage: async (...args: unknown[]) =>
+            args.includes('Delete Recursively') ? 'Delete Recursively' : 'Delete',
+          withProgress: async (
+            _options: unknown,
+            task: (progress: unknown, token: unknown) => unknown,
+          ) => task({ report: () => undefined }, { isCancellationRequested: false }),
+        },
+        ProgressLocation: vscode.ProgressLocation,
+      } as never,
+      codec,
+      pool,
+      cache,
+      provider,
+    );
+    await mutations.createDirectory(first.id, root, 'nested');
+    await mutations.createFile(first.id, `${root}/nested`, 'created.txt');
+    await mutations.rename(first.id, `${root}/nested/created.txt`, 'renamed.txt');
+    assert.equal(
+      Buffer.from(await external.readFile(`${root}/nested/renamed.txt`)).byteLength,
+      0,
+      'new files must be atomically created with zero bytes',
+    );
+    runDocker(['exec', container, 'sh', '-c', `ln -s renamed.txt '${root}/nested/link'`]);
+
+    const destination = await mkdtemp(join(tmpdir(), 'easyssh-browser-download-'));
+    try {
+      const downloads = new DownloadService(
+        {
+          Uri: vscode.Uri,
+          FileType: vscode.FileType,
+          ProgressLocation: vscode.ProgressLocation,
+          workspace: vscode.workspace,
+          window: {
+            showOpenDialog: async () => [vscode.Uri.file(destination)],
+            showWarningMessage: async () => 'Overwrite',
+            showInformationMessage: async () => undefined,
+            withProgress: async (
+              _options: unknown,
+              task: (progress: unknown, token: unknown) => unknown,
+            ) => task({ report: () => undefined }, { isCancellationRequested: false }),
+          },
+        } as never,
+        pool,
+        { maxBufferedTransferMiB: () => configuration.maxBufferedTransferMiB },
+      );
+      const downloaded = await downloads.chooseAndDownload(first.id, [`${root}/nested`]);
+      assert.equal(downloaded.completed, 2, 'the directory and regular file should complete');
+      assert.deepEqual(downloaded.skipped, [
+        { path: 'nested/link', reason: 'Symbolic links are not downloaded.' },
+      ]);
+      assert.equal(await readFile(join(destination, 'nested', 'renamed.txt'), 'utf8'), '');
+    } finally {
+      await rm(destination, { recursive: true, force: true });
+    }
+
+    const deleted = await mutations.delete(first.id, `${root}/nested`);
+    assert.equal(deleted.failed.length, 0);
+    assert.ok(deleted.deleted >= 3, 'recursive delete must unlink the link and file before rmdir');
+    await assert.rejects(() => external.lstat(`${root}/nested`));
   });
 });
 

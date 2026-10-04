@@ -22,14 +22,18 @@ import { SshTerminalRegistry } from '../ssh/SshTerminalSession';
 import { TestConnectionService } from '../ssh/TestConnectionService';
 import { VsCodeHostTrustPrompt } from '../ssh/VsCodeHostTrustPrompt';
 import { AtomicSftpWriter, type RemoteConflictReason } from '../sftp/AtomicSftpWriter';
+import { DownloadService } from '../sftp/DownloadService';
+import { RemoteMutationService } from '../sftp/RemoteMutationService';
 import { RemoteFileOpenService } from '../sftp/RemoteFileOpenService';
 import { RemoteResourceCache } from '../sftp/RemoteResourceCache';
 import { RemoteSftpFileSystemProvider } from '../sftp/RemoteSftpFileSystemProvider';
+import { SftpBrowserService } from '../sftp/SftpBrowserService';
 import { SessionSftpClientFactory } from '../sftp/SftpClientFactory';
 import { DefaultSftpConnectionPool } from '../sftp/SftpConnectionPool';
 import { DefaultSftpUriCodec } from '../sftp/SftpUriCodec';
 import { ConnectionEditor } from '../views/connections/ConnectionEditor';
 import { ImportPreview, type ImportSelection } from '../views/connections/ImportPreview';
+import { SftpPanelManager } from '../views/sftp/SftpPanel';
 import {
   ConnectionNode,
   ConnectionsTreeProvider,
@@ -53,6 +57,7 @@ export class ExtensionApplication implements vscode.Disposable {
   private readonly sftpCache: RemoteResourceCache;
   private readonly sftpProvider: RemoteSftpFileSystemProvider;
   private readonly remoteFileOpener: RemoteFileOpenService;
+  private readonly sftpPanels: SftpPanelManager;
   private readonly knownConnectionIds = new Set<string>();
   private readonly terminals: SshTerminalRegistry;
   private readonly connectionTester: TestConnectionService;
@@ -132,6 +137,33 @@ export class ExtensionApplication implements vscode.Disposable {
       this.sftpPool,
       () => this.configuration.getSnapshot().maxInlineFileSizeMiB,
     );
+    const sftpBrowser = new SftpBrowserService(this.sftpPool, this.sftpCache);
+    const remoteMutations = new RemoteMutationService(
+      vscodeApi,
+      this.sftpUriCodec,
+      this.sftpPool,
+      this.sftpCache,
+      this.sftpProvider,
+    );
+    const downloads = new DownloadService(vscodeApi, this.sftpPool, {
+      maxBufferedTransferMiB: () => this.configuration.getSnapshot().maxBufferedTransferMiB,
+    });
+    this.sftpPanels = this.disposables.add(
+      new SftpPanelManager({
+        vscodeApi,
+        extensionUri: context.extensionUri,
+        browser: sftpBrowser,
+        mutations: remoteMutations,
+        downloads,
+        remoteFileOpener: this.remoteFileOpener,
+        codec: this.sftpUriCodec,
+        pool: this.sftpPool,
+        resolveConnection: async (connectionId) =>
+          (await this.state.load()).connections.find(
+            (connection) => connection.id === connectionId,
+          ),
+      }),
+    );
     this.terminals = this.disposables.add(
       new SshTerminalRegistry(vscodeApi, this.sshSessions, this.logger),
     );
@@ -176,6 +208,7 @@ export class ExtensionApplication implements vscode.Disposable {
 
   async activate(): Promise<void> {
     this.replaceKnownConnections((await this.state.load()).connections.map(({ id }) => id));
+    this.sftpPanels.registerRestoration();
     this.disposables.add(
       this.state.onDidChange((change) => {
         const previousIds = new Set(change.previous.connections.map(({ id }) => id));
@@ -187,6 +220,7 @@ export class ExtensionApplication implements vscode.Disposable {
             void this.sftpPool.invalidate(connectionId, 'connection removed');
           }
         }
+        this.sftpPanels.updateConnections(change.current.connections);
         this.treeProvider.refresh(change);
       }),
     );
@@ -407,9 +441,7 @@ export class ExtensionApplication implements vscode.Disposable {
     this.commands.register({
       id: 'easysshManager.openSftp',
       execute: async (item: unknown) => {
-        await this.openRemoteFileForDevelopment(
-          item === undefined ? undefined : selectedId(item, ConnectionNode),
-        );
+        await this.sftpPanels.open(selectedId(item, ConnectionNode));
       },
     });
     this.commands.register({

@@ -57,6 +57,8 @@ const webview = {
   format: 'iife',
   entryPoints: {
     'webview/main': resolve(root, 'src/views/shared/webview/main.ts'),
+    'webview/sftp-browser': resolve(root, 'src/views/sftp/webview/main.ts'),
+    'webview/sftp-browser-style': resolve(root, 'src/views/sftp/webview/sftp-browser.css'),
   },
   outdir,
 };

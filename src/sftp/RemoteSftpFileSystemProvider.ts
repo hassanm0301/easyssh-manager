@@ -217,6 +217,28 @@ export class RemoteSftpFileSystemProvider implements vscode.FileSystemProvider, 
     this.changes.dispose();
   }
 
+  /**
+   * Reports a mutation performed by a host-side browser service. This deliberately
+   * exposes only already-constructed provider URIs and change kinds; browser code
+   * cannot obtain transport state or manufacture filesystem events for other schemes.
+   */
+  emitMutationChanges(
+    changes: readonly {
+      readonly type: 'created' | 'deleted' | 'changed';
+      readonly uri: vscode.Uri;
+    }[],
+  ): void {
+    for (const change of changes) {
+      const type =
+        change.type === 'created'
+          ? this.api.FileChangeType.Created
+          : change.type === 'deleted'
+            ? this.api.FileChangeType.Deleted
+            : this.api.FileChangeType.Changed;
+      this.queueChange(type, change.uri);
+    }
+  }
+
   private async withClient<T>(
     connectionId: string,
     operation: (client: import('./ports').SftpClient) => Promise<T>,
