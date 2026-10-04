@@ -46,12 +46,18 @@ remote path; browsing and editing arrive in a later milestone.
   deterministic cleanup.
 - Saved and unsaved **Test Connection** flows that authenticate, open SFTP,
   resolve and list the configured default path, and report stage latency.
+- Accessible remote SFTP browser with lazy navigation, sorting, create/rename/
+  delete actions, atomic remote editing, safe download planning, and explicit
+  conflict handling.
+- Lazy multi-root Workspace pane for trusted workspaces, host-authorized
+  internal drag/drop, file/folder pickers, bounded workspace-to-remote uploads,
+  operation-local conflict choices, streamed local sources, and atomic commits.
 
 ## Current scope
 
-SFTP browsing, remote editing, transfers, and MCP access are planned for
-subsequent milestones. The extension includes no telemetry or background
-service and never consults or writes OpenSSH `known_hosts`.
+MCP access is planned for a later milestone. The extension includes no
+telemetry or background service and never consults or writes OpenSSH
+`known_hosts`.
 
 ## License
 
