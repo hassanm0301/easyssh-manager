@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { posix } from 'node:path';
 
 import { EasySshError } from '../../common/errors';
 import { RemoteResourceCache } from '../../sftp/RemoteResourceCache';
@@ -19,6 +20,7 @@ interface TestUri {
   readonly fragment: string;
   readonly fsPath: string;
   toString(): string;
+  with(change: { path?: string; query?: string; fragment?: string }): TestUri;
 }
 
 function uri(path: string, scheme = 'mem', authority = '', query = '', fragment = ''): TestUri {
@@ -32,6 +34,14 @@ function uri(path: string, scheme = 'mem', authority = '', query = '', fragment 
     fsPath: scheme === 'file' ? normalized : '',
     toString: () =>
       `${scheme}://${authority}${normalized}${query ? `?${query}` : ''}${fragment ? `#${fragment}` : ''}`,
+    with: (change) =>
+      uri(
+        change.path ?? normalized,
+        scheme,
+        authority,
+        change.query ?? query,
+        change.fragment ?? fragment,
+      ),
   };
 }
 
@@ -79,9 +89,10 @@ class MemoryWorkspace {
       ProgressLocation: { Notification: 15 },
       Uri: {
         parse: (value: string) => parse(value),
+        file: (value: string) => uri(value, 'file'),
         joinPath: (base: TestUri, ...segments: string[]) =>
           uri(
-            `${base.path.replace(/\/$/, '')}/${segments.join('/')}`,
+            posix.normalize(`${base.path.replace(/\/$/, '')}/${segments.join('/')}`),
             base.scheme,
             base.authority,
             base.query,
@@ -278,6 +289,36 @@ describe('workspace pane authorization', () => {
     } catch (error) {
       expect(error).toMatchObject({ code: 'WORKSPACE_UNTRUSTED' });
     }
+  });
+
+  it('navigates to provider parents and resolves typed sibling paths without widening schemes', async () => {
+    const workspace = new MemoryWorkspace();
+    workspace.putDirectory('/', [
+      ['workspace', workspace.FileType.Directory],
+      ['sibling', workspace.FileType.Directory],
+    ]);
+    workspace.putDirectory('/workspace');
+    workspace.putDirectory('/sibling', [['nested', workspace.FileType.Directory]]);
+    workspace.putDirectory('/sibling/nested');
+    const pane = new WorkspacePaneService(workspace.host() as never);
+    const root = pane.initialize().roots[0]!;
+    const parent = await pane.parent(root.uri);
+    expect(parent).toBe('mem:///');
+    const parentEntries = await pane.readChildren(parent);
+    expect(parentEntries.map((entry) => entry.name)).toEqual(['sibling', 'workspace']);
+    const siblingEntry = parentEntries.find((entry) => entry.name === 'sibling')!;
+    await expect(
+      pane.freshAuthorizedSources({ type: 'workspace-items', uris: [siblingEntry.uri] }),
+    ).resolves.toHaveLength(1);
+    const sibling = await pane.resolveTypedDirectory('../sibling', root.uri);
+    expect(pane.displayPath(sibling)).toBe('mem:///sibling');
+    expect((await pane.suggestDirectories('n', sibling))[0]).toMatchObject({
+      label: 'nested',
+      value: 'mem:///sibling/nested',
+    });
+    await expect(pane.resolveTypedDirectory('other://host/path', sibling)).rejects.toThrow(
+      'unavailable filesystem provider',
+    );
   });
 });
 

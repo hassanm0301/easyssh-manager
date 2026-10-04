@@ -62,6 +62,23 @@ describe('SFTP browser protocol boundary', () => {
     expect(() => validateSftpRequest(Object.create({ requestId: '1', type: 'back' }))).toThrow(
       'Invalid SFTP browser request',
     );
+    expect(
+      validateSftpRequest({ requestId: '2', type: 'navigateInput', value: '../relative' }),
+    ).toEqual({ requestId: '2', type: 'navigateInput', value: '../relative' });
+    expect(
+      validateSftpRequest({
+        requestId: '3',
+        type: 'workspaceNavigate',
+        target: 'Workspace',
+        input: true,
+      }),
+    ).toEqual({ requestId: '3', type: 'workspaceNavigate', target: 'Workspace', input: true });
+    expect(() =>
+      validateSftpRequest({ requestId: '4', type: 'workspaceOpen', uri: '', extra: true }),
+    ).toThrow('Invalid SFTP browser request');
+    expect(() =>
+      validateSftpRequest({ requestId: '5', type: 'workspaceDelete', uri: 'file:///tmp/a' }),
+    ).toThrow('Invalid SFTP browser request');
   });
 
   it('restores only versioned secret-free state and removes bad history entries', () => {
@@ -132,6 +149,15 @@ describe('SFTP browser webview security', () => {
     expect(html).toContain("default-src 'none'");
     expect(html).toContain("script-src 'nonce-nonce-value'");
     expect(html).toContain('style-src vscode-webview-resource:');
+    expect(html).toContain('font-src vscode-webview-resource:');
+    expect(html).toContain('webview-theme.css');
+    expect(html).toContain('class="browser-layout"');
+    expect(html).toContain('codicon codicon-remote-explorer');
+    expect(html).toContain('aria-label="More actions"');
+    expect(html).toContain('id="workspace-path" role="combobox"');
+    expect(html).toContain('id="remote-path" role="combobox"');
+    expect(html).toContain('id="workspace-list" class="file-list" role="treegrid"');
+    expect(html).toContain('id="list" class="file-list" role="treegrid"');
     expect(html).not.toContain('unsafe-eval');
     expect(html).not.toContain('http://');
     expect(html).not.toContain('https://');

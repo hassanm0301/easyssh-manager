@@ -183,9 +183,14 @@ export class ExtensionApplication implements vscode.Disposable {
     );
     this.connectionTester = new TestConnectionService(this.sshSessions, connectionResolver);
     this.editor = this.disposables.add(
-      new ConnectionEditor(vscodeApi, this.connections, this.connectionTester),
+      new ConnectionEditor(
+        vscodeApi,
+        context.extensionUri,
+        this.connections,
+        this.connectionTester,
+      ),
     );
-    this.importPreview = this.disposables.add(new ImportPreview(vscodeApi));
+    this.importPreview = this.disposables.add(new ImportPreview(vscodeApi, context.extensionUri));
     this.treeProvider = this.disposables.add(
       new ConnectionsTreeProvider(this.state, (id, folderId, beforeId) =>
         this.connections.moveItem(id, folderId, beforeId),
@@ -195,7 +200,7 @@ export class ExtensionApplication implements vscode.Disposable {
       vscodeApi.window.createTreeView('easysshManager.connections', {
         treeDataProvider: this.treeProvider,
         dragAndDropController: this.treeProvider,
-        showCollapseAll: true,
+        showCollapseAll: false,
       }),
     );
     this.disposables.add(
@@ -248,6 +253,24 @@ export class ExtensionApplication implements vscode.Disposable {
       id: 'easysshManager.refreshConnections',
       execute: async () => {
         this.treeProvider.refresh();
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.collapseAllConnections',
+      execute: async () => {
+        await this.state.update((draft) => {
+          draft.uiPreferences.expandedFolderIds = [];
+        });
+        this.treeProvider.refresh();
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.openSettings',
+      execute: async () => {
+        await this.vscodeApi.commands.executeCommand(
+          'workbench.action.openSettings',
+          '@ext:hassanm0301.easyssh-manager',
+        );
       },
     });
     this.commands.register({

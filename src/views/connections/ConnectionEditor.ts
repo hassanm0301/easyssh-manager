@@ -10,6 +10,7 @@ import {
 } from '../../connections/ConnectionService';
 import type { ConnectionFolder, RemoteConnection } from '../../connections/types';
 import type { TestConnectionService } from '../../ssh/TestConnectionService';
+import { webviewPanelOptions, webviewStylesheets } from '../shared/WebviewAssets';
 
 type SaveRequest = {
   requestId: string;
@@ -27,6 +28,7 @@ export class ConnectionEditor implements vscode.Disposable {
 
   constructor(
     private readonly vscodeApi: typeof vscode,
+    private readonly extensionUri: vscode.Uri,
     private readonly connections: ConnectionService,
     private readonly connectionTester?: TestConnectionService,
   ) {}
@@ -40,12 +42,20 @@ export class ConnectionEditor implements vscode.Disposable {
       'easysshManager.connectionEditor',
       connection ? `Edit ${connection.name}` : 'New Connection',
       this.vscodeApi.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: false },
+      webviewPanelOptions(this.vscodeApi, this.extensionUri),
     );
     const nonce = crypto.randomBytes(18).toString('base64');
     this.panels.add(panel);
     panel.onDidDispose(() => this.panels.delete(panel));
-    panel.webview.html = editorHtml(panel.webview, nonce, connection, folders, initialFolderId);
+    panel.webview.html = editorHtml(
+      panel.webview,
+      this.vscodeApi,
+      this.extensionUri,
+      nonce,
+      connection,
+      folders,
+      initialFolderId,
+    );
     panel.webview.onDidReceiveMessage(async (message: unknown) => {
       const requestId = requestIdOf(message);
       try {
@@ -394,20 +404,20 @@ function requestIdOf(value: unknown): string {
 
 export function editorHtml(
   webview: vscode.Webview,
+  api: typeof vscode,
+  extensionUri: vscode.Uri,
   nonce: string,
   connection?: RemoteConnection,
   folders: readonly ConnectionFolder[] = [],
   initialFolderId: string | null = null,
 ): string {
-  const themeStyles = `[hidden]{display:none!important}body{width:auto;box-sizing:border-box;color:var(--vscode-foreground);background:var(--vscode-editor-background);font-family:var(--vscode-font-family)}form,label{width:100%;box-sizing:border-box}input:not([type=checkbox]),select,textarea{padding:.35rem;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent)}input[type=checkbox]{display:inline;width:auto}fieldset{border-color:var(--vscode-panel-border)}button{padding:.35rem .7rem;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0}button:hover{background:var(--vscode-button-hoverBackground)}`;
-  return renderEditorHtml(webview, nonce, connection, folders, initialFolderId).replace(
-    '</style>',
-    `${themeStyles}</style>`,
-  );
+  return renderEditorHtml(webview, api, extensionUri, nonce, connection, folders, initialFolderId);
 }
 
 function renderEditorHtml(
   webview: vscode.Webview,
+  api: typeof vscode,
+  extensionUri: vscode.Uri,
   nonce: string,
   connection?: RemoteConnection,
   folders: readonly ConnectionFolder[] = [],
@@ -449,5 +459,53 @@ function renderEditorHtml(
   const folderData = JSON.stringify(
     folders.map((folder) => ({ id: folder.id, name: folder.name })),
   ).replace(/</g, '\\u003c');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><title>Connection</title><style nonce="${nonce}">body{max-width:48rem;margin:1rem auto}label{display:block;margin:.7rem 0}input,select,textarea{display:block;width:100%;box-sizing:border-box}input[type=checkbox]{display:inline;width:auto}[hidden]{display:none!important}fieldset{margin:1rem 0}button{margin-right:.5rem}</style></head><body><form id="form"><label>Name<input id="name" required maxlength="200"></label><label>Folder<select id="folder"><option value="">Root</option></select></label><label>Host<input id="host" required></label><label>Port<input id="port" type="number" min="1" max="65535" required></label><label>Username<input id="username" required maxlength="255"></label><label>Default remote path<input id="path" required></label><fieldset><legend>Authentication</legend><label><select id="auth"><option value="agent">SSH agent</option><option value="password">Password</option><option value="privateKey">Private key</option></select></label><label id="keyRow">Private-key path<input id="keyPath" autocomplete="off"></label><label id="passwordRow">Password <span id="passwordStatus"></span><input id="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep"></label><label id="phraseRow">Key passphrase <span id="phraseStatus"></span><input id="passphrase" type="password" autocomplete="new-password" placeholder="Leave blank to keep"></label><label id="clearPasswordRow"><input id="clearPassword" type="checkbox"> Clear stored password</label><label id="clearPhraseRow"><input id="clearPhrase" type="checkbox"> Clear stored passphrase</label></fieldset><fieldset><legend>Connection options</legend><label>Keepalive override (ms)<input id="keepAlive" type="number" min="0" max="300000"></label><label>Keepalive retry override<input id="keepAliveCount" type="number" min="1" max="20"></label><label>Ready timeout override (ms)<input id="readyTimeout" type="number" min="1000" max="120000"></label></fieldset><details><summary>Agent access policy</summary><label><input id="agentEnabled" type="checkbox"> Enable agent access</label><label><input id="agentRead" type="checkbox"> Allow read files</label><label><input id="agentWrite" type="checkbox"> Allow write files</label><label><input id="agentExec" type="checkbox"> Allow execute</label><label>Confirmation<select id="agentConfirm"><option value="always">Always</option><option value="destructive">Destructive only</option><option value="never">Never</option></select></label><label>Allowed POSIX roots (one per line)<textarea id="agentRoots"></textarea></label></details><button type="submit">Save</button><button id="test" type="button">Test Connection</button></form><p id="status" role="status" aria-live="polite"></p><script nonce="${nonce}">const vscode=acquireVsCodeApi(),initial=${initial},folders=${folderData},$=id=>document.getElementById(id),set=(id,v)=>$(id).value=v??'';for(const folder of folders){const option=document.createElement('option');option.value=folder.id;option.textContent=folder.name;$('folder').append(option)}set('name',initial.name);set('host',initial.host);set('port',initial.port);set('username',initial.username);set('path',initial.defaultRemotePath);set('folder',initial.folderId);set('keepAlive',initial.options.keepAliveIntervalMs);set('keepAliveCount',initial.options.keepAliveCountMax);set('readyTimeout',initial.options.readyTimeoutMs);$('auth').value=initial.authentication.type;set('keyPath',initial.authentication.privateKeyPath);$('passwordStatus').textContent=initial.authentication.hasStoredPassword?'(Stored)':'';$('phraseStatus').textContent=initial.authentication.hasStoredPassphrase?'(Stored)':'';for(const [id,key] of [['agentEnabled','enabled'],['agentRead','allowReadFiles'],['agentWrite','allowWriteFiles'],['agentExec','allowExec']])$(id).checked=initial.agentAccess[key];$('agentConfirm').value=initial.agentAccess.confirmationMode;set('agentRoots',initial.agentAccess.allowedRoots.join('\\n'));const render=()=>{$('keyRow').hidden=$('auth').value!=='privateKey';$('passwordRow').hidden=$('auth').value!=='password';$('phraseRow').hidden=$('auth').value!=='privateKey';$('clearPasswordRow').hidden=!initial.authentication.hasStoredPassword;$('clearPhraseRow').hidden=!initial.authentication.hasStoredPassphrase;if($('auth').value!=='password')$('password').value='';if($('auth').value!=='privateKey')$('passphrase').value='';};$('auth').onchange=render;render();let sequence=0,pending=0,dirty=false;document.addEventListener('input',()=>dirty=true);const change=(value,clear)=>clear.checked?{action:'clear'}:value?{action:'set',value}:{action:'keep'};const numberOrUndefined=id=>$(id).value===''?undefined:Number($(id).value);const send=(type,payload={})=>{pending=++sequence;vscode.postMessage({requestId:String(pending),type,...payload})};const payload=()=>{const type=$('auth').value,authentication=type==='agent'?{type}:type==='password'?{type,hasStoredPassword:initial.authentication.hasStoredPassword===true}:{type,privateKeyPath:$('keyPath').value,hasStoredPassphrase:initial.authentication.hasStoredPassphrase===true},agentAccess={enabled:$('agentEnabled').checked,allowReadFiles:$('agentRead').checked,allowWriteFiles:$('agentWrite').checked,allowExec:$('agentExec').checked,allowInteractiveShell:false,confirmationMode:$('agentConfirm').value,allowedRoots:$('agentRoots').value.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean)};return{value:{name:$('name').value,folderId:$('folder').value||null,host:$('host').value,port:Number($('port').value),username:$('username').value,defaultRemotePath:$('path').value,authentication,agentAccess,options:{...(numberOrUndefined('keepAlive')===undefined?{}:{keepAliveIntervalMs:numberOrUndefined('keepAlive')}),...(numberOrUndefined('keepAliveCount')===undefined?{}:{keepAliveCountMax:numberOrUndefined('keepAliveCount')}),...(numberOrUndefined('readyTimeout')===undefined?{}:{readyTimeoutMs:numberOrUndefined('readyTimeout')})}},password:change($('password').value,$('clearPassword')),passphrase:change($('passphrase').value,$('clearPhrase'))}};$('form').onsubmit=e=>{e.preventDefault();const type=$('auth').value;if(initial.authentication.type==='password'&&initial.authentication.hasStoredPassword&&type!=='password'&&!$('clearPassword').checked){if(!confirm('Changing authentication will delete the stored password. Continue?'))return;$('clearPassword').checked=true;}if(initial.authentication.type==='privateKey'&&initial.authentication.hasStoredPassphrase&&type!=='privateKey'&&!$('clearPhrase').checked){if(!confirm('Changing authentication will delete the stored key passphrase. Continue?'))return;$('clearPhrase').checked=true;}send('save',payload())};$('test').onclick=()=>send('test',payload());window.addEventListener('message',e=>{if(String(pending)!==e.data.requestId)return;$('status').textContent=e.data.ok?(e.data.message||'Saved.'):(e.data.error||'Save failed.');if(e.data.ok&&!e.data.message)dirty=false;});window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});</script></body></html>`;
+  const styles = webviewStylesheets(webview, api, extensionUri, 'connection-editor-style.css');
+  const heading = connection ? 'Edit connection' : 'New connection';
+  const description = connection
+    ? 'Update how this profile connects. Stored secrets are never returned to this page.'
+    : 'Create a reusable SSH and SFTP profile. Credentials are stored separately from connection metadata.';
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'">
+${styles}<title>${heading}</title></head><body>
+<main class="page-shell connection-page">
+  <header class="page-header"><div class="eyebrow"><span class="codicon codicon-server" aria-hidden="true"></span>EasySSH Manager</div><h1>${heading}</h1><p>${description}</p></header>
+  <form id="form" class="connection-form">
+    <section class="surface-card form-card" aria-labelledby="basics-heading">
+      <div class="card-header"><div><h2 id="basics-heading">Connection details</h2><p>Name the profile and provide the remote endpoint.</p></div><span class="codicon codicon-plug" aria-hidden="true"></span></div>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Name</span><input id="name" required maxlength="200" autocomplete="off"><span class="field-help">A recognizable name shown in the Connections view.</span></label>
+        <label class="field"><span class="field-label">Folder</span><select id="folder"><option value="">Root</option></select><span class="field-help">Optional organization within the sidebar.</span></label>
+        <label class="field span-2"><span class="field-label">Host</span><input id="host" required autocomplete="off" spellcheck="false" placeholder="server.example.com"><span class="field-help">Hostname or IP address of the SSH server.</span></label>
+        <label class="field"><span class="field-label">Port</span><input id="port" type="number" min="1" max="65535" required inputmode="numeric"></label>
+        <label class="field"><span class="field-label">Username</span><input id="username" required maxlength="255" autocomplete="username"></label>
+        <label class="field span-2"><span class="field-label">Default remote path</span><input id="path" required spellcheck="false" placeholder="/"><span class="field-help">The directory opened first in the SFTP browser.</span></label>
+      </div>
+    </section>
+    <section class="surface-card form-card" aria-labelledby="authentication-heading">
+      <div class="card-header"><div><h2 id="authentication-heading">Authentication</h2><p>Choose how EasySSH should authenticate this connection.</p></div><span class="codicon codicon-shield" aria-hidden="true"></span></div>
+      <div class="form-grid">
+        <label class="field span-2"><span class="field-label">Method</span><select id="auth"><option value="agent">SSH agent</option><option value="password">Password</option><option value="privateKey">Private key</option></select></label>
+        <label id="keyRow" class="field span-2"><span class="field-label">Private-key path</span><input id="keyPath" autocomplete="off" spellcheck="false" placeholder="/home/user/.ssh/id_ed25519"><span class="field-help">The key stays on disk and is read only when connecting.</span></label>
+        <label id="passwordRow" class="field span-2"><span class="label-line"><span class="field-label">Password</span><span id="passwordStatus" class="badge success" hidden><span class="codicon codicon-lock" aria-hidden="true"></span>Stored</span></span><input id="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the stored password"></label>
+        <label id="phraseRow" class="field span-2"><span class="label-line"><span class="field-label">Key passphrase</span><span id="phraseStatus" class="badge success" hidden><span class="codicon codicon-lock" aria-hidden="true"></span>Stored</span></span><input id="passphrase" type="password" autocomplete="new-password" placeholder="Leave blank to keep the stored passphrase"></label>
+        <label id="clearPasswordRow" class="checkbox-field secret-clear"><input id="clearPassword" type="checkbox"><span>Delete the stored password when saving</span></label>
+        <label id="clearPhraseRow" class="checkbox-field secret-clear"><input id="clearPhrase" type="checkbox"><span>Delete the stored key passphrase when saving</span></label>
+      </div>
+    </section>
+    <details id="connectionOptions" class="surface-card disclosure-card"><summary><span class="codicon codicon-chevron-right disclosure-icon" aria-hidden="true"></span><span class="disclosure-title"><strong>Connection options</strong><span>Override keepalive and timeout defaults for this profile.</span></span></summary><div class="disclosure-content"><div class="form-grid">
+      <label class="field"><span class="field-label">Keepalive interval (ms)</span><input id="keepAlive" type="number" min="0" max="300000"><span class="field-help">Leave blank to use the extension default.</span></label>
+      <label class="field"><span class="field-label">Keepalive retry count</span><input id="keepAliveCount" type="number" min="1" max="20"></label>
+      <label class="field"><span class="field-label">Ready timeout (ms)</span><input id="readyTimeout" type="number" min="1000" max="120000"></label>
+    </div></div></details>
+    <details id="agentPolicy" class="surface-card disclosure-card"><summary><span class="codicon codicon-chevron-right disclosure-icon" aria-hidden="true"></span><span class="disclosure-title"><strong>Agent access</strong><span>Control whether automated tools may use this connection.</span></span></summary><div class="disclosure-content"><div class="form-grid">
+      <label class="checkbox-field span-2"><input id="agentEnabled" type="checkbox"><span><strong>Enable agent access</strong><br><span class="field-help">This connection remains unavailable to agents until enabled.</span></span></label>
+      <div class="agent-grants" role="group" aria-label="Agent permissions"><label class="checkbox-field"><input id="agentRead" type="checkbox"><span>Read files</span></label><label class="checkbox-field"><input id="agentWrite" type="checkbox"><span>Write files</span></label><label class="checkbox-field"><input id="agentExec" type="checkbox"><span>Execute commands</span></label></div>
+      <label class="field"><span class="field-label">Confirmation</span><select id="agentConfirm"><option value="always">Always</option><option value="destructive">Destructive only</option><option value="never">Never</option></select></label>
+      <label class="field span-2"><span class="field-label">Allowed POSIX roots</span><textarea id="agentRoots" spellcheck="false" placeholder="One absolute path per line"></textarea></label>
+    </div></div></details>
+    <footer class="action-bar connection-actions"><p id="status" class="status-message" role="status" aria-live="polite"></p><div class="actions"><button id="test" class="secondary" type="button"><span class="codicon codicon-debug-alt" aria-hidden="true"></span>Test Connection</button><button id="save" type="submit"><span class="codicon codicon-save" aria-hidden="true"></span>Save Connection</button></div></footer>
+  </form>
+</main>
+<script nonce="${nonce}">const vscode=acquireVsCodeApi(),initial=${initial},folders=${folderData},$=id=>document.getElementById(id),set=(id,v)=>$(id).value=v??'';for(const folder of folders){const option=document.createElement('option');option.value=folder.id;option.textContent=folder.name;$('folder').append(option)}set('name',initial.name);set('host',initial.host);set('port',initial.port);set('username',initial.username);set('path',initial.defaultRemotePath);set('folder',initial.folderId);set('keepAlive',initial.options.keepAliveIntervalMs);set('keepAliveCount',initial.options.keepAliveCountMax);set('readyTimeout',initial.options.readyTimeoutMs);$('auth').value=initial.authentication.type;set('keyPath',initial.authentication.privateKeyPath);$('passwordStatus').hidden=!initial.authentication.hasStoredPassword;$('phraseStatus').hidden=!initial.authentication.hasStoredPassphrase;for(const [id,key] of [['agentEnabled','enabled'],['agentRead','allowReadFiles'],['agentWrite','allowWriteFiles'],['agentExec','allowExec']])$(id).checked=initial.agentAccess[key];$('agentConfirm').value=initial.agentAccess.confirmationMode;set('agentRoots',initial.agentAccess.allowedRoots.join('\\n'));if(Object.keys(initial.options).length)$('connectionOptions').open=true;if(initial.agentAccess.enabled||initial.agentAccess.allowedRoots.length)$('agentPolicy').open=true;const render=()=>{$('keyRow').hidden=$('auth').value!=='privateKey';$('passwordRow').hidden=$('auth').value!=='password';$('phraseRow').hidden=$('auth').value!=='privateKey';$('clearPasswordRow').hidden=!initial.authentication.hasStoredPassword;$('clearPhraseRow').hidden=!initial.authentication.hasStoredPassphrase;if($('auth').value!=='password')$('password').value='';if($('auth').value!=='privateKey')$('passphrase').value='';};$('auth').onchange=render;render();let sequence=0,pending=0,dirty=false;document.addEventListener('input',()=>dirty=true);const change=(value,clear)=>clear.checked?{action:'clear'}:value?{action:'set',value}:{action:'keep'};const numberOrUndefined=id=>$(id).value===''?undefined:Number($(id).value);const busy=(value,label='')=>{$('form').setAttribute('aria-busy',String(value));$('save').disabled=value;$('test').disabled=value;if(value){$('status').dataset.tone='';$('status').textContent=label}};const send=(type,payload={})=>{pending=++sequence;busy(true,type==='test'?'Testing connection…':'Saving connection…');vscode.postMessage({requestId:String(pending),type,...payload})};const payload=()=>{const type=$('auth').value,authentication=type==='agent'?{type}:type==='password'?{type,hasStoredPassword:initial.authentication.hasStoredPassword===true}:{type,privateKeyPath:$('keyPath').value,hasStoredPassphrase:initial.authentication.hasStoredPassphrase===true},agentAccess={enabled:$('agentEnabled').checked,allowReadFiles:$('agentRead').checked,allowWriteFiles:$('agentWrite').checked,allowExec:$('agentExec').checked,allowInteractiveShell:false,confirmationMode:$('agentConfirm').value,allowedRoots:$('agentRoots').value.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean)};return{value:{name:$('name').value,folderId:$('folder').value||null,host:$('host').value,port:Number($('port').value),username:$('username').value,defaultRemotePath:$('path').value,authentication,agentAccess,options:{...(numberOrUndefined('keepAlive')===undefined?{}:{keepAliveIntervalMs:numberOrUndefined('keepAlive')}),...(numberOrUndefined('keepAliveCount')===undefined?{}:{keepAliveCountMax:numberOrUndefined('keepAliveCount')}),...(numberOrUndefined('readyTimeout')===undefined?{}:{readyTimeoutMs:numberOrUndefined('readyTimeout')})}},password:change($('password').value,$('clearPassword')),passphrase:change($('passphrase').value,$('clearPhrase'))}};$('form').onsubmit=e=>{e.preventDefault();const type=$('auth').value;if(initial.authentication.type==='password'&&initial.authentication.hasStoredPassword&&type!=='password'&&!$('clearPassword').checked){if(!confirm('Changing authentication will delete the stored password. Continue?'))return;$('clearPassword').checked=true;}if(initial.authentication.type==='privateKey'&&initial.authentication.hasStoredPassphrase&&type!=='privateKey'&&!$('clearPhrase').checked){if(!confirm('Changing authentication will delete the stored key passphrase. Continue?'))return;$('clearPhrase').checked=true;}send('save',payload())};$('test').onclick=()=>{if($('form').reportValidity())send('test',payload())};window.addEventListener('message',e=>{if(String(pending)!==e.data.requestId)return;busy(false);$('status').dataset.tone=e.data.ok?'success':'error';$('status').textContent=e.data.ok?(e.data.message||'Saved.'):(e.data.error||'Save failed.');if(e.data.ok&&!e.data.message)dirty=false;});window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});</script></body></html>`;
 }

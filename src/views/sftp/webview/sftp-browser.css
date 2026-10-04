@@ -1,102 +1,528 @@
-:root {
-  color: var(--vscode-foreground);
-  background: var(--vscode-editor-background);
-  font-family: var(--vscode-font-family);
-}
 body {
-  margin: 0;
-  padding: 0.75rem;
+  min-height: 100vh;
 }
-button {
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-  border: 1px solid transparent;
-  border-radius: 2px;
-  padding: 0.3rem 0.5rem;
+
+#sftp-browser {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  gap: var(--easyssh-space-2);
+  min-height: 100vh;
+  padding: clamp(0.5rem, 1.3vw, 0.9rem);
 }
-button:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-button:focus-visible,
-[role='option']:focus-visible {
-  outline: 2px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
-}
-button:disabled {
-  opacity: 0.55;
-}
-.toolbar {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  margin-block-end: 0.65rem;
-}
-#breadcrumbs {
+
+.browser-header {
   display: flex;
   align-items: center;
-  gap: 0.2rem;
-  overflow-wrap: anywhere;
-  margin-block: 0.4rem;
+  justify-content: space-between;
+  gap: var(--easyssh-space-3);
 }
-#breadcrumbs button {
-  color: var(--vscode-textLink-foreground);
+
+.browser-header h1 {
+  margin: 0;
+  font-size: 1.18rem;
+  line-height: 1.2;
+}
+
+.browser-header .eyebrow {
+  margin-block-end: 0.12rem;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-2);
+}
+
+#status,
+.loading-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+#status[data-tone='connected'],
+#status[data-tone='success'] {
+  color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+
+#status[data-tone='error'] {
+  color: var(--vscode-errorForeground);
+}
+
+.loading-label {
+  font-size: 0.82rem;
+}
+
+.browser-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(15rem, var(--workspace-pane-width, 40%)) 0.65rem
+    minmax(20rem, 1fr);
+  align-items: stretch;
+  gap: 0;
+  min-height: 26rem;
+}
+
+.pane-resizer {
+  position: relative;
+  min-width: 0.65rem;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--easyssh-border);
+  content: '';
+}
+
+.pane-resizer:hover::before,
+.pane-resizer:focus-visible::before,
+.pane-resizer.is-resizing::before {
+  width: 3px;
+  background: var(--vscode-focusBorder);
+  transform: translateX(-1px);
+}
+
+.pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  flex-direction: column;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--easyssh-space-2);
+  min-height: 2.25rem;
+  padding: 0.42rem var(--easyssh-space-3);
+  border-block-end: 1px solid var(--easyssh-border);
+  background: var(--easyssh-muted-surface);
+}
+
+.pane-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-2);
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.pane-hint {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-toolbar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-1);
+  padding: 0.35rem var(--easyssh-space-2);
+  border-block-end: 1px solid var(--easyssh-border);
+  flex-wrap: wrap;
+}
+
+.remote-toolbar {
+  gap: var(--easyssh-space-2);
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-1);
+}
+
+.toolbar-group + .toolbar-group {
+  padding-inline-start: var(--easyssh-space-2);
+  border-inline-start: 1px solid var(--easyssh-border);
+}
+
+.transfer-group {
+  margin-inline-start: auto;
+}
+
+.path-combobox {
+  position: relative;
+  min-width: 9rem;
+  flex: 1 1 12rem;
+}
+
+.path-combobox input {
+  width: 100%;
+  height: 1.8rem;
+  padding: 0.15rem 0.42rem;
+  border: 1px solid var(--vscode-input-border, var(--easyssh-border));
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.82rem;
+}
+
+.path-combobox input:focus {
+  border-color: var(--vscode-focusBorder);
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.path-suggestions {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 2px);
+  right: 0;
+  left: 0;
+  max-height: 14rem;
+  overflow: auto;
+  border: 1px solid var(--vscode-widget-border, var(--easyssh-border));
+  background: var(--vscode-quickInput-background, var(--vscode-menu-background));
+  box-shadow: var(--easyssh-shadow);
+}
+
+.path-option {
+  display: grid;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0;
+  color: var(--vscode-quickInput-foreground, var(--vscode-menu-foreground));
   background: transparent;
-  padding: 0.15rem;
+  text-align: start;
 }
-#status {
-  min-height: 1.25rem;
+
+.path-option small {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-#list {
-  border: 1px solid var(--vscode-editorWidget-border);
-  min-height: 12rem;
+
+.path-option:hover,
+.path-option[aria-selected='true'] {
+  color: var(--vscode-quickInputList-focusForeground, var(--vscode-list-activeSelectionForeground));
+  background: var(
+    --vscode-quickInputList-focusBackground,
+    var(--vscode-list-activeSelectionBackground)
+  );
 }
+
+.pane-state {
+  margin: 0;
+  padding: 0.2rem var(--easyssh-space-3);
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.82rem;
+}
+
+.pane-state:empty {
+  display: none;
+}
+
+.file-list {
+  min-height: 16rem;
+  overflow: auto;
+  outline: none;
+  flex: 1;
+}
+
 .headers,
 .entry {
   display: grid;
-  grid-template-columns: minmax(12rem, 1fr) 8rem 13rem;
-  gap: 0.5rem;
+  grid-template-columns: var(--column-template, 260px 100px 180px);
   align-items: center;
-  padding: 0.35rem 0.5rem;
+  width: max-content;
+  min-width: 100%;
 }
+
 .headers {
-  border-block-end: 1px solid var(--vscode-editorWidget-border);
-  background: var(--vscode-sideBar-background);
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  border-block-end: 1px solid var(--easyssh-border);
+  background: var(--easyssh-muted-surface);
 }
-.headers button {
-  text-align: start;
-  background: transparent;
+
+.column-header {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 1.85rem;
+  align-items: stretch;
+}
+
+.column-header > button,
+.column-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--easyssh-space-1);
+  min-width: 0;
+  min-height: 1.85rem;
+  padding: 0.25rem 0.5rem;
+  overflow: hidden;
+  border-radius: 0;
   color: var(--vscode-foreground);
+  background: transparent;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
 }
-.entry[aria-selected='true'] {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+
+.column-header > button:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
 }
+
+.column-resizer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: -0.25rem;
+  bottom: 0;
+  width: 0.5rem;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resizer::after {
+  position: absolute;
+  top: 0.3rem;
+  bottom: 0.3rem;
+  left: calc(50% - 0.5px);
+  width: 1px;
+  background: var(--easyssh-border);
+  content: '';
+}
+
+.column-resizer:hover::after,
+.column-resizer:focus-visible::after,
+.column-resizer.is-resizing::after {
+  width: 2px;
+  background: var(--vscode-focusBorder);
+}
+
+[data-column][hidden] {
+  display: none !important;
+}
+
+.sort-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.entry {
+  min-height: 1.9rem;
+  border-block-end: 1px solid transparent;
+  cursor: default;
+}
+
+.entry > [data-column] {
+  min-width: 0;
+  padding: 0.26rem 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry > .name {
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-1);
+  min-width: 0;
+  padding-inline-start: calc(0.5rem + var(--entry-depth) * 1rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle-slot {
+  display: inline-grid;
+  width: 1.1rem;
+  min-width: 1.1rem;
+  place-items: center;
+}
+
+.entry-toggle {
+  display: inline-grid;
+  width: 1.1rem;
+  min-width: 1.1rem;
+  min-height: 1.1rem;
+  padding: 0;
+  place-items: center;
+  color: currentColor;
+  background: transparent;
+}
+
 .entry:hover {
   background: var(--vscode-list-hoverBackground);
 }
-#empty,
-#error {
-  padding: 0.75rem;
+
+.entry[aria-selected='true'] {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
 }
-#error {
+
+.entry .codicon {
+  flex: 0 0 auto;
+  color: var(--vscode-symbolIcon-fileForeground, var(--vscode-descriptionForeground));
+}
+
+.entry .codicon-folder {
+  color: var(--vscode-symbolIcon-folderForeground, var(--vscode-descriptionForeground));
+}
+
+.entry[aria-selected='true'] > .name > .codicon {
+  color: currentColor;
+}
+
+.entry-children {
+  display: block;
+  grid-column: 1 / -1;
+}
+
+.inline-state {
+  padding: 0.25rem 0.5rem 0.25rem calc((var(--entry-depth) + 2) * 1rem);
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8rem;
+}
+
+.file-list[aria-busy='true'] {
+  opacity: 0.64;
+}
+
+.file-list.is-drop-target,
+.entry.is-drop-target {
+  outline: 2px dashed var(--vscode-focusBorder);
+  outline-offset: -3px;
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--easyssh-space-2);
+  padding: 2rem 1rem;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+}
+
+.empty-state > .codicon {
+  font-size: 1.6rem;
+}
+
+.empty-state strong {
+  color: var(--vscode-foreground);
+}
+
+.error-state > .codicon,
+.error-state strong {
   color: var(--vscode-errorForeground);
 }
-#menu {
+
+#menu,
+.columns-menu {
   position: fixed;
-  z-index: 2;
+  z-index: 40;
   display: grid;
   min-width: 12rem;
-  padding: 0.25rem;
+  padding: 0.28rem;
+  border: 1px solid var(--vscode-menu-border, var(--easyssh-border));
+  border-radius: var(--easyssh-radius-sm);
   background: var(--vscode-menu-background);
-  border: 1px solid var(--vscode-menu-border);
+  box-shadow: var(--easyssh-shadow);
 }
-#menu button {
-  text-align: start;
+
+.columns-menu {
+  position: fixed;
+  z-index: 45;
+}
+
+.columns-menu label {
+  display: flex;
+  min-height: 1.9rem;
+  padding: 0.25rem 0.45rem;
+  align-items: center;
+  gap: var(--easyssh-space-2);
   color: var(--vscode-menu-foreground);
-  background: transparent;
+  cursor: pointer;
 }
+
+.columns-menu label:hover {
+  color: var(--vscode-menu-selectionForeground);
+  background: var(--vscode-menu-selectionBackground);
+}
+
+.columns-menu label:has(input:disabled) {
+  cursor: default;
+  opacity: 0.7;
+}
+
+#menu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 1.9rem;
+  color: var(--vscode-menu-foreground);
+  text-align: start;
+}
+
+#menu button:hover:not(:disabled),
+#menu button:focus-visible {
+  color: var(--vscode-menu-selectionForeground);
+  background: var(--vscode-menu-selectionBackground);
+}
+
+@media (max-width: 70rem) {
+  .browser-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pane-resizer {
+    display: none;
+  }
+
+  #workspace-pane {
+    max-height: 24rem;
+  }
+}
+
+@media (max-width: 44rem) {
+  .browser-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .transfer-group {
+    width: 100%;
+    margin-inline-start: 0;
+    padding-block-start: var(--easyssh-space-1);
+    padding-inline-start: 0 !important;
+    border-block-start: 1px solid var(--easyssh-border);
+    border-inline-start: 0 !important;
+    flex-wrap: wrap;
+  }
+}
+
 @media (forced-colors: active) {
   .entry[aria-selected='true'] {
     outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  #menu,
+  .columns-menu,
+  .path-suggestions {
+    box-shadow: none;
   }
 }

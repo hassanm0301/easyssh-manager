@@ -20,12 +20,23 @@ export const DEFAULT_UPLOAD_CONCURRENCY = 3;
 export interface WorkspaceRootView {
   readonly name: string;
   readonly uri: string;
+  readonly path: string;
 }
 
 export interface WorkspaceEntryView {
   readonly name: string;
   readonly uri: string;
+  readonly path: string;
   readonly kind: 'file' | 'directory' | 'symbolicLink' | 'other';
+  readonly size?: number;
+  readonly mtimeMs?: number;
+}
+
+export interface WorkspacePathSuggestion {
+  readonly label: string;
+  readonly value: string;
+  readonly description: string;
+  readonly uri: string;
 }
 
 export interface WorkspaceDragPayload {
@@ -102,7 +113,7 @@ export interface UploadService {
 }
 
 type WorkspaceHost = Pick<typeof vscode, 'FileType' | 'ProgressLocation'> & {
-  readonly Uri: Pick<typeof vscode.Uri, 'parse' | 'joinPath'>;
+  readonly Uri: Pick<typeof vscode.Uri, 'parse' | 'joinPath' | 'file'>;
   readonly workspace: Pick<
     typeof vscode.workspace,
     | 'workspaceFolders'
@@ -182,7 +193,11 @@ export class WorkspacePaneService implements vscode.Disposable {
     return {
       generation: this.generation,
       state: 'ready',
-      roots: folders.map((folder) => ({ name: folder.name, uri: this.issue(folder.uri) })),
+      roots: folders.map((folder) => ({
+        name: folder.name,
+        uri: this.issue(folder.uri),
+        path: displayUri(folder.uri),
+      })),
     };
   }
 
@@ -199,21 +214,113 @@ export class WorkspacePaneService implements vscode.Disposable {
     } catch (error) {
       throw workspaceProviderError(uri, error);
     }
+    const views = await mapConcurrent(entries, 32, async ([name, type]) => {
+      if (!isSafeSegment(name)) {
+        throw new EasySshError('REMOTE_IO', 'The workspace provider returned an unsafe name.');
+      }
+      const child = this.host.Uri.joinPath(uri, name);
+      if (!this.isAllowedLocation(child)) {
+        throw new EasySshError(
+          'VALIDATION',
+          'The workspace provider returned an item outside the allowed filesystem.',
+        );
+      }
+      let size: number | undefined;
+      let mtimeMs: number | undefined;
+      try {
+        const metadata = await this.host.workspace.fs.stat(child);
+        if (Number.isSafeInteger(metadata.size)) size = metadata.size;
+        if (Number.isSafeInteger(metadata.mtime)) mtimeMs = metadata.mtime;
+      } catch {
+        // A provider may race or omit metadata; the directory entry remains useful.
+      }
+      return {
+        name,
+        uri: this.issue(child),
+        path: displayUri(child),
+        kind: workspaceKind(type, this.host.FileType),
+        ...(size === undefined ? {} : { size }),
+        ...(mtimeMs === undefined ? {} : { mtimeMs }),
+      };
+    });
+    return views.sort((left, right) =>
+      left.name.localeCompare(right.name, undefined, { numeric: true }),
+    );
+  }
+
+  displayPath(value: unknown): string {
+    const uri = this.authorizeOne(value);
+    return uri.scheme === 'file' ? uri.fsPath : uri.toString();
+  }
+
+  async parent(value: unknown): Promise<string | undefined> {
+    const uri = this.authorizeOne(value);
+    const parentPath = posix.dirname(uri.path);
+    if (parentPath === uri.path) return undefined;
+    const parent = uri.with({ path: parentPath, query: '', fragment: '' });
+    await this.assertDirectory(parent);
+    return this.issue(parent);
+  }
+
+  async resolveTypedDirectory(value: unknown, current?: unknown): Promise<string> {
+    this.assertTrusted();
+    if (
+      typeof value !== 'string' ||
+      value.length === 0 ||
+      value.length > 8_192 ||
+      value.includes('\0')
+    ) {
+      throw new EasySshError('VALIDATION', 'The workspace path is invalid.');
+    }
+    const base = current === undefined ? undefined : this.authorizeOne(current);
+    const uri = this.resolveInputUri(value.trim(), base);
+    if (!this.isAllowedLocation(uri)) {
+      throw new EasySshError('VALIDATION', 'The path uses an unavailable filesystem provider.');
+    }
+    await this.assertDirectory(uri);
+    return this.issue(uri);
+  }
+
+  async suggestDirectories(
+    value: unknown,
+    current?: unknown,
+    limit = 50,
+  ): Promise<readonly WorkspacePathSuggestion[]> {
+    this.assertTrusted();
+    if (typeof value !== 'string' || value.length > 8_192 || value.includes('\0')) return [];
+    const base = current === undefined ? undefined : this.authorizeOne(current);
+    const input = value.trim();
+    const slash = Math.max(input.lastIndexOf('/'), input.lastIndexOf('\\'));
+    const parentText = slash < 0 ? '.' : input.slice(0, slash + 1);
+    const prefix = slash < 0 ? input : input.slice(slash + 1);
+    let parent: vscode.Uri;
+    try {
+      parent = this.resolveInputUri(parentText || '.', base);
+      if (!this.isAllowedLocation(parent)) return [];
+      await this.assertDirectory(parent);
+    } catch {
+      return [];
+    }
+    const issuedParent = this.issue(parent);
+    const entries = await this.readChildren(issuedParent);
     return entries
-      .map(([name, type]) => {
-        if (!isSafeSegment(name)) {
-          throw new EasySshError('REMOTE_IO', 'The workspace provider returned an unsafe name.');
-        }
-        const child = this.host.Uri.joinPath(uri, name);
-        if (!this.isUnderCurrentRoot(child)) {
-          throw new EasySshError(
-            'VALIDATION',
-            'The workspace provider returned an item outside its root.',
-          );
-        }
-        return { name, uri: this.issue(child), kind: workspaceKind(type, this.host.FileType) };
-      })
-      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+      .filter(
+        (entry) =>
+          entry.kind === 'directory' &&
+          entry.name.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase()),
+      )
+      .slice(0, Math.max(1, Math.min(limit, 100)))
+      .map((entry) => ({
+        label: entry.name,
+        value: this.displayPath(entry.uri),
+        description: this.displayPath(entry.uri),
+        uri: entry.uri,
+      }));
+  }
+
+  authorizeIssued(value: unknown): vscode.Uri {
+    this.assertTrusted();
+    return this.authorizeOne(value);
   }
 
   authorizeDragPayload(value: unknown): readonly vscode.Uri[] {
@@ -276,7 +383,7 @@ export class WorkspacePaneService implements vscode.Disposable {
       issued.uri.toString() !== value ||
       parsed.toString() !== value ||
       !sameUri(issued.uri, parsed) ||
-      !this.isUnderCurrentRoot(parsed)
+      !this.isAllowedLocation(parsed)
     ) {
       throw new EasySshError('VALIDATION', 'The workspace URI was not authorized for this panel.');
     }
@@ -284,10 +391,10 @@ export class WorkspacePaneService implements vscode.Disposable {
   }
 
   private issue(uri: vscode.Uri): string {
-    if (!this.isUnderCurrentRoot(uri)) {
+    if (!this.isAllowedLocation(uri)) {
       throw new EasySshError(
         'VALIDATION',
-        'Refusing to expose a URI outside the current workspace.',
+        'Refusing to expose a URI from an unavailable filesystem provider.',
       );
     }
     const value = uri.toString();
@@ -295,11 +402,40 @@ export class WorkspacePaneService implements vscode.Disposable {
     return value;
   }
 
-  private isUnderCurrentRoot(uri: vscode.Uri): boolean {
+  private isAllowedLocation(uri: vscode.Uri): boolean {
     if (unsafeUriText(uri.toString()) || uri.path.includes('\0')) return false;
-    return (this.host.workspace.workspaceFolders ?? []).some((folder) =>
-      containsUri(folder.uri, uri),
+    return (this.host.workspace.workspaceFolders ?? []).some(
+      (folder) => folder.uri.scheme === uri.scheme && folder.uri.authority === uri.authority,
     );
+  }
+
+  private resolveInputUri(value: string, base: vscode.Uri | undefined): vscode.Uri {
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value)) return this.host.Uri.parse(value, true);
+    if (base?.scheme === 'file') {
+      return posix.isAbsolute(value)
+        ? this.host.Uri.file(posix.normalize(value))
+        : this.host.Uri.joinPath(base, value);
+    }
+    if (base) {
+      const path = posix.isAbsolute(value)
+        ? posix.normalize(value)
+        : posix.normalize(posix.join(base.path, value));
+      return base.with({ path, query: '', fragment: '' });
+    }
+    if (posix.isAbsolute(value)) return this.host.Uri.file(posix.normalize(value));
+    throw new EasySshError('VALIDATION', 'Choose a workspace root before using a relative path.');
+  }
+
+  private async assertDirectory(uri: vscode.Uri): Promise<void> {
+    let stat: vscode.FileStat;
+    try {
+      stat = await this.host.workspace.fs.stat(uri);
+    } catch (error) {
+      throw workspaceProviderError(uri, error);
+    }
+    if (!isDirectory(stat.type, this.host.FileType)) {
+      throw new EasySshError('NOT_DIRECTORY', 'The workspace path is not a directory.');
+    }
   }
 
   private assertTrusted(): void {
@@ -339,6 +475,10 @@ export class WorkspacePaneService implements vscode.Disposable {
       }
     }
   }
+}
+
+function displayUri(uri: vscode.Uri): string {
+  return uri.scheme === 'file' ? uri.fsPath : uri.toString();
 }
 
 export interface UploadServiceOptions {
@@ -1303,6 +1443,24 @@ function addScanned(scanned: number, maximum: number): number {
 
 function isKnownSize(size: number): boolean {
   return Number.isSafeInteger(size) && size >= 0;
+}
+
+async function mapConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await operation(values[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function comparePlanEntries(left: UploadPlanEntry, right: UploadPlanEntry): number {

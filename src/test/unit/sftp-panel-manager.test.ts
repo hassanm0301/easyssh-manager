@@ -65,6 +65,20 @@ function harness(found = connection()) {
     list: vi.fn(async (_id: string, path: string) => ({ path, entries: [] })),
     resolveExplicitLink: vi.fn(async (_id: string, path: string) => path),
   };
+  const remoteKind = { value: 'directory' as 'file' | 'directory' };
+  const pool = {
+    acquire: vi.fn(async () => ({
+      connectionId: CONNECTION_ID,
+      client: { lstat: vi.fn(async () => ({ kind: remoteKind.value })) },
+      touch: () => undefined,
+      [Symbol.asyncDispose]: async () => undefined,
+    })),
+  };
+  const uploads = {
+    onDidCommit: () => ({ dispose: () => undefined }),
+    uploadWorkspaceItems: vi.fn(),
+    chooseAndUpload: vi.fn(),
+  };
   const manager = new SftpPanelManager({
     vscodeApi: api as never,
     extensionUri: {} as never,
@@ -73,23 +87,27 @@ function harness(found = connection()) {
     downloads: {} as never,
     remoteFileOpener: {} as never,
     codec: {} as never,
-    pool: {} as never,
-    uploads: {
-      onDidCommit: () => ({ dispose: () => undefined }),
-      uploadWorkspaceItems: vi.fn(),
-      chooseAndUpload: vi.fn(),
-    } as never,
+    pool: pool as never,
+    uploads: uploads as never,
     createWorkspacePane: () =>
       ({
         initialize: () => ({ generation: 0, state: 'noWorkspace', roots: [] }),
         onDidChange: () => ({ dispose: () => undefined }),
         dispose: () => undefined,
         readChildren: vi.fn(),
-        freshAuthorizedSources: vi.fn(),
+        freshAuthorizedSources: vi.fn(async () => [{ path: '/source' }]),
       }) as never,
     resolveConnection: vi.fn(async () => found as never),
   });
-  return { manager, api, browser, created, serializer: () => serializer };
+  return {
+    manager,
+    api,
+    browser,
+    created,
+    uploads,
+    remoteKind,
+    serializer: () => serializer,
+  };
 }
 
 describe('SFTP panel manager lifecycle', () => {
@@ -148,5 +166,30 @@ describe('SFTP panel manager lifecycle', () => {
       .filter((message) => message.type === 'render')
       .map((message) => message.value.path);
     expect(renderedPaths?.at(-1)).toBe('/second');
+  });
+
+  it('rechecks a dropped remote target and rejects it if it is not a directory', async () => {
+    const { manager, created, uploads, remoteKind } = harness();
+    remoteKind.value = 'file';
+    await manager.open(CONNECTION_ID);
+    const receive = created[0]?.receive();
+    if (!receive) throw new Error('Panel did not register its message listener.');
+    await receive({
+      requestId: 'drop',
+      type: 'workspaceDrop',
+      targetPath: '/remote-file',
+      payload: { type: 'workspace-items', uris: ['file:///workspace/source'] },
+    });
+    expect(uploads.uploadWorkspaceItems).not.toHaveBeenCalled();
+    expect(created[0]?.value.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'response',
+        requestId: 'drop',
+        ok: false,
+        error: expect.objectContaining({
+          message: 'Choose a remote directory as the upload target.',
+        }),
+      }),
+    );
   });
 });

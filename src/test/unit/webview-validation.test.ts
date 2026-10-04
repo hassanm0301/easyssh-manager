@@ -9,7 +9,7 @@ import {
   validateEditorInput,
   validateEditorMessage,
 } from '../../views/connections/ConnectionEditor';
-import { validateImportMessage } from '../../views/connections/ImportPreview';
+import { importPreviewHtml, validateImportMessage } from '../../views/connections/ImportPreview';
 import { defaultAgentAccessPolicy } from '../../connections/types';
 
 const baseInput = {
@@ -57,7 +57,16 @@ describe('connection editor runtime validation', () => {
   });
 
   it('renders a nonce-only CSP without serializing secret values', () => {
+    const api = {
+      Uri: { joinPath: (_base: unknown, ...parts: string[]) => ({ path: `/${parts.join('/')}` }) },
+    };
+    const webview = {
+      cspSource: 'vscode-webview-resource:',
+      asWebviewUri: (uri: { path: string }) => `vscode-webview-resource:${uri.path}`,
+    };
     const html = editorHtml(
+      webview as never,
+      api as never,
       {} as never,
       'fixed-nonce',
       {
@@ -70,15 +79,16 @@ describe('connection editor runtime validation', () => {
       },
       [],
     );
-    expect(html).toContain(
-      "default-src 'none'; style-src 'nonce-fixed-nonce'; script-src 'nonce-fixed-nonce'",
-    );
+    expect(html).toContain("default-src 'none'; style-src vscode-webview-resource:");
+    expect(html).toContain('font-src vscode-webview-resource:');
+    expect(html).toContain("script-src 'nonce-fixed-nonce'");
     expect(html).toContain('hasStoredPassword');
     expect(html).not.toContain('SENTINEL_PASSWORD');
     expect(html).toContain('beforeunload');
-    expect(html).toContain('[hidden]{display:none!important}');
-    expect(html).toContain('input[type=checkbox]{display:inline;width:auto}');
-    expect(html).toContain('var(--vscode-input-background)');
+    expect(html).toContain('webview-theme.css');
+    expect(html).toContain('connection-editor-style.css');
+    expect(html).toContain('class="surface-card form-card"');
+    expect(html).not.toContain('<style');
     const script = /<script nonce="fixed-nonce">([\s\S]*)<\/script>/.exec(html)?.[1];
     expect(script).toBeDefined();
     if (script === undefined) throw new Error('Editor script was not generated.');
@@ -90,6 +100,8 @@ describe('connection editor runtime validation', () => {
     const panel = {
       webview: {
         html: '',
+        cspSource: 'vscode-webview-resource:',
+        asWebviewUri: (uri: { path: string }) => `vscode-webview-resource:${uri.path}`,
         onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
           receive = listener;
           return { dispose: () => undefined };
@@ -104,7 +116,11 @@ describe('connection editor runtime validation', () => {
       {
         window: { createWebviewPanel: () => panel },
         ViewColumn: { One: 1 },
+        Uri: {
+          joinPath: (_base: unknown, ...parts: string[]) => ({ path: `/${parts.join('/')}` }),
+        },
       } as never,
+      {} as never,
       {
         editConnection: vi.fn(async () => {
           throw new Error('metadata rejected');
@@ -199,5 +215,33 @@ describe('import preview runtime validation', () => {
         [],
       ),
     ).toThrow('Select one of the resolved identity files');
+  });
+
+  it('renders packaged styles and accessible import state without remote sources', () => {
+    const api = {
+      Uri: { joinPath: (_base: unknown, ...parts: string[]) => ({ path: `/${parts.join('/')}` }) },
+    };
+    const webview = {
+      cspSource: 'vscode-webview-resource:',
+      asWebviewUri: (uri: { path: string }) => `vscode-webview-resource:${uri.path}`,
+    };
+    const html = importPreviewHtml(
+      webview as never,
+      api as never,
+      {} as never,
+      'fixed-nonce',
+      [candidate],
+      [],
+    );
+    expect(html).toContain('webview-theme.css');
+    expect(html).toContain('import-preview-style.css');
+    expect(html).toContain('id="selection-count"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).not.toContain('http://');
+    expect(html).not.toContain('https://');
+    const script = /<script nonce="fixed-nonce">([\s\S]*)<\/script>/.exec(html)?.[1];
+    expect(script).toBeDefined();
+    if (script === undefined) throw new Error('Import script was not generated.');
+    expect(() => new Script(script)).not.toThrow();
   });
 });

@@ -1,0 +1,150 @@
+.connection-page {
+  width: min(100%, 52rem);
+}
+
+.connection-form {
+  display: grid;
+  gap: var(--easyssh-space-4);
+}
+
+.form-card {
+  padding: var(--easyssh-space-4);
+}
+
+.form-card > .card-header {
+  margin-block-end: var(--easyssh-space-4);
+}
+
+.form-card > .card-header p {
+  margin: 0.25rem 0 0;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.45;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--easyssh-space-3) var(--easyssh-space-4);
+}
+
+.field {
+  display: grid;
+  align-content: start;
+  gap: 0.32rem;
+  min-width: 0;
+}
+
+.field.span-2 {
+  grid-column: 1 / -1;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+.field-help {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.label-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--easyssh-space-2);
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--easyssh-space-2);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.checkbox-field input {
+  margin: 0.18rem 0 0;
+}
+
+.secret-clear {
+  grid-column: 1 / -1;
+  padding: var(--easyssh-space-3);
+  border-radius: var(--easyssh-radius-sm);
+  background: var(--vscode-inputValidation-warningBackground, var(--easyssh-muted-surface));
+}
+
+.disclosure-card {
+  overflow: clip;
+}
+
+.disclosure-card summary {
+  display: flex;
+  align-items: center;
+  gap: var(--easyssh-space-3);
+  padding: var(--easyssh-space-4);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.disclosure-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure-icon {
+  flex: 0 0 auto;
+  transition: transform 100ms ease;
+}
+
+.disclosure-card[open] .disclosure-icon {
+  transform: rotate(90deg);
+}
+
+.disclosure-title {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.disclosure-title strong {
+  font-size: 1rem;
+}
+
+.disclosure-title span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.86rem;
+  font-weight: 400;
+}
+
+.disclosure-content {
+  padding: 0 var(--easyssh-space-4) var(--easyssh-space-4);
+  border-block-start: 1px solid var(--easyssh-border);
+}
+
+.disclosure-content .form-grid {
+  padding-block-start: var(--easyssh-space-4);
+}
+
+.agent-grants {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--easyssh-space-3);
+  grid-column: 1 / -1;
+}
+
+.connection-actions .status-message {
+  flex: 1;
+}
+
+@media (max-width: 40rem) {
+  .form-grid,
+  .agent-grants {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .field.span-2,
+  .secret-clear,
+  .agent-grants {
+    grid-column: auto;
+  }
+}

@@ -5,7 +5,7 @@ import type { RemoteEntryKind } from '../ports';
 import { normalizeRemotePath } from '../SftpUriCodec';
 import { validateWorkspaceDragPayload, type WorkspaceDragPayload } from '../WorkspaceUploadService';
 
-export const SFTP_PANEL_STATE_VERSION = 1 as const;
+export const SFTP_PANEL_STATE_VERSION = 2 as const;
 export const MAX_REQUEST_ID_LENGTH = 80;
 export const MAX_PATH_LENGTH = 4_096;
 export const MAX_CHILD_NAME_LENGTH = 255;
@@ -14,6 +14,26 @@ export const MAX_HISTORY_ENTRIES = 100;
 
 export type SftpSortKey = 'name' | 'size' | 'mtime';
 export type SftpSortDirection = 'asc' | 'desc';
+export type SftpColumnKey = 'name' | 'type' | 'size' | 'mtime' | 'path';
+export type SftpPane = 'workspace' | 'remote';
+export type SftpColumnWidths = Readonly<Record<SftpColumnKey, number>>;
+
+export interface SftpLayoutState {
+  readonly paneRatio: number;
+  readonly visibleColumns: readonly SftpColumnKey[];
+  readonly workspaceColumnWidths: SftpColumnWidths;
+  readonly remoteColumnWidths: SftpColumnWidths;
+}
+
+export function defaultSftpLayoutState(): SftpLayoutState {
+  const widths = { name: 260, type: 110, size: 100, mtime: 180, path: 280 } as const;
+  return {
+    paneRatio: 0.4,
+    visibleColumns: ['name', 'size', 'mtime'],
+    workspaceColumnWidths: { ...widths },
+    remoteColumnWidths: { ...widths },
+  };
+}
 
 /** Persisted panel state intentionally contains only navigation/display metadata. */
 export interface SftpPanelState {
@@ -23,6 +43,7 @@ export interface SftpPanelState {
   readonly historyBack: readonly string[];
   readonly historyForward: readonly string[];
   readonly sort: { readonly key: SftpSortKey; readonly direction: SftpSortDirection };
+  readonly layout: SftpLayoutState;
 }
 
 export interface RemoteEntryView {
@@ -42,6 +63,14 @@ export type SftpRequest =
       readonly force: boolean;
     }
   | { readonly requestId: string; readonly type: 'navigate'; readonly path: string }
+  | { readonly requestId: string; readonly type: 'navigateInput'; readonly value: string }
+  | {
+      readonly requestId: string;
+      readonly type: 'remoteExpand';
+      readonly path: string;
+      readonly force: boolean;
+    }
+  | { readonly requestId: string; readonly type: 'remoteSuggest'; readonly value: string }
   | { readonly requestId: string; readonly type: 'open'; readonly path: string }
   | {
       readonly requestId: string;
@@ -67,6 +96,24 @@ export type SftpRequest =
   | { readonly requestId: string; readonly type: 'workspaceExpand'; readonly uri: string }
   | {
       readonly requestId: string;
+      readonly type: 'workspaceNavigate';
+      readonly target: string;
+      readonly input: boolean;
+    }
+  | { readonly requestId: string; readonly type: 'workspaceBack' }
+  | { readonly requestId: string; readonly type: 'workspaceForward' }
+  | { readonly requestId: string; readonly type: 'workspaceUp' }
+  | { readonly requestId: string; readonly type: 'workspaceOpen'; readonly uri: string }
+  | { readonly requestId: string; readonly type: 'workspaceCopyPath'; readonly uri: string }
+  | { readonly requestId: string; readonly type: 'workspaceSuggest'; readonly value: string }
+  | {
+      readonly requestId: string;
+      readonly type: 'workspaceSetSort';
+      readonly key: SftpSortKey;
+      readonly direction: SftpSortDirection;
+    }
+  | {
+      readonly requestId: string;
       readonly type: 'workspaceDrop';
       readonly targetPath: string;
       readonly payload: WorkspaceDragPayload;
@@ -83,7 +130,8 @@ export type SftpRequest =
       readonly type: 'setSort';
       readonly key: SftpSortKey;
       readonly direction: SftpSortDirection;
-    };
+    }
+  | { readonly requestId: string; readonly type: 'setLayout'; readonly layout: SftpLayoutState };
 
 export interface SftpResponse<T> {
   readonly requestId: string;
@@ -112,6 +160,19 @@ export function validateSftpRequest(value: unknown): SftpRequest {
     case 'copyPath':
       exactKeys(value, ['requestId', 'type', 'path']);
       return { requestId: value.requestId, type: value.type, path: requestPath(value.path) };
+    case 'navigateInput':
+    case 'remoteSuggest':
+      exactKeys(value, ['requestId', 'type', 'value']);
+      return { requestId: value.requestId, type: value.type, value: inputPath(value.value) };
+    case 'remoteExpand':
+      exactKeys(value, ['requestId', 'type', 'path', 'force']);
+      if (typeof value.force !== 'boolean') invalidRequest();
+      return {
+        requestId: value.requestId,
+        type: 'remoteExpand',
+        path: requestPath(value.path),
+        force: value.force,
+      };
     case 'createFile':
     case 'createDirectory':
       exactKeys(value, ['requestId', 'type', 'parentPath', 'name']);
@@ -152,6 +213,29 @@ export function validateSftpRequest(value: unknown): SftpRequest {
         invalidRequest();
       }
       return { requestId: value.requestId, type: 'workspaceExpand', uri: value.uri };
+    case 'workspaceNavigate':
+      exactKeys(value, ['requestId', 'type', 'target', 'input']);
+      if (typeof value.input !== 'boolean') invalidRequest();
+      return {
+        requestId: value.requestId,
+        type: 'workspaceNavigate',
+        target: inputPath(value.target),
+        input: value.input,
+      };
+    case 'workspaceOpen':
+    case 'workspaceCopyPath':
+      exactKeys(value, ['requestId', 'type', 'uri']);
+      if (typeof value.uri !== 'string' || value.uri.length === 0 || value.uri.length > 8_192) {
+        invalidRequest();
+      }
+      return { requestId: value.requestId, type: value.type, uri: value.uri };
+    case 'workspaceSuggest':
+      exactKeys(value, ['requestId', 'type', 'value']);
+      return {
+        requestId: value.requestId,
+        type: 'workspaceSuggest',
+        value: inputPath(value.value, true),
+      };
     case 'workspaceDrop':
       exactKeys(value, ['requestId', 'type', 'targetPath', 'payload']);
       return {
@@ -174,18 +258,39 @@ export function validateSftpRequest(value: unknown): SftpRequest {
     case 'cancel':
       exactKeys(value, ['requestId', 'type']);
       return { requestId: value.requestId, type: value.type };
+    case 'workspaceBack':
+    case 'workspaceForward':
+    case 'workspaceUp':
+      exactKeys(value, ['requestId', 'type']);
+      return { requestId: value.requestId, type: value.type };
     case 'setSort':
+    case 'workspaceSetSort':
       exactKeys(value, ['requestId', 'type', 'key', 'direction']);
       if (!isSortKey(value.key) || !isSortDirection(value.direction)) invalidRequest();
       return {
         requestId: value.requestId,
-        type: 'setSort',
+        type: value.type,
         key: value.key,
         direction: value.direction,
       };
+    case 'setLayout':
+      exactKeys(value, ['requestId', 'type', 'layout']);
+      return { requestId: value.requestId, type: 'setLayout', layout: validateLayout(value.layout) };
     default:
       invalidRequest();
   }
+}
+
+function inputPath(value: unknown, allowEmpty = false): string {
+  if (
+    typeof value !== 'string' ||
+    (!allowEmpty && value.trim().length === 0) ||
+    value.length > 8_192 ||
+    value.includes('\0')
+  ) {
+    invalidRequest();
+  }
+  return value;
 }
 
 export function validateSftpPanelState(
@@ -194,16 +299,13 @@ export function validateSftpPanelState(
 ): SftpPanelState {
   if (!isExactObject(value))
     throw new EasySshError('VALIDATION', 'Invalid saved SFTP panel state.');
+  const legacy = value.version === 1;
+  const expectedKeys = legacy
+    ? ['version', 'connectionId', 'currentPath', 'historyBack', 'historyForward', 'sort']
+    : ['version', 'connectionId', 'currentPath', 'historyBack', 'historyForward', 'sort', 'layout'];
   if (
-    !sameKeys(value, [
-      'version',
-      'connectionId',
-      'currentPath',
-      'historyBack',
-      'historyForward',
-      'sort',
-    ]) ||
-    value.version !== SFTP_PANEL_STATE_VERSION ||
+    !sameKeys(value, expectedKeys) ||
+    (!legacy && value.version !== SFTP_PANEL_STATE_VERSION) ||
     typeof value.connectionId !== 'string' ||
     (expectedConnectionId !== undefined && value.connectionId !== expectedConnectionId) ||
     !Array.isArray(value.historyBack) ||
@@ -224,7 +326,66 @@ export function validateSftpPanelState(
     historyBack: normalizeHistory(value.historyBack),
     historyForward: normalizeHistory(value.historyForward),
     sort: { key: value.sort.key, direction: value.sort.direction },
+    layout: legacy ? defaultSftpLayoutState() : validateLayout(value.layout),
   };
+}
+
+function validateLayout(value: unknown): SftpLayoutState {
+  if (
+    !isExactObject(value) ||
+    !sameKeys(value, [
+      'paneRatio',
+      'visibleColumns',
+      'workspaceColumnWidths',
+      'remoteColumnWidths',
+    ]) ||
+    typeof value.paneRatio !== 'number' ||
+    !Number.isFinite(value.paneRatio) ||
+    value.paneRatio < 0.2 ||
+    value.paneRatio > 0.8 ||
+    !Array.isArray(value.visibleColumns) ||
+    value.visibleColumns.length === 0 ||
+    value.visibleColumns.length > 5 ||
+    !value.visibleColumns.every(isColumnKey) ||
+    !value.visibleColumns.includes('name') ||
+    new Set(value.visibleColumns).size !== value.visibleColumns.length
+  ) {
+    invalidRequest();
+  }
+  return {
+    paneRatio: value.paneRatio,
+    visibleColumns: [...value.visibleColumns],
+    workspaceColumnWidths: validateColumnWidths(value.workspaceColumnWidths),
+    remoteColumnWidths: validateColumnWidths(value.remoteColumnWidths),
+  };
+}
+
+function validateColumnWidths(value: unknown): SftpColumnWidths {
+  const keys: readonly SftpColumnKey[] = ['name', 'type', 'size', 'mtime', 'path'];
+  if (
+    !isExactObject(value) ||
+    !sameKeys(value, keys) ||
+    !keys.every(
+      (key) =>
+        typeof value[key] === 'number' &&
+        Number.isFinite(value[key]) &&
+        value[key] >= 64 &&
+        value[key] <= 1_200,
+    )
+  ) {
+    invalidRequest();
+  }
+  return {
+    name: value.name as number,
+    type: value.type as number,
+    size: value.size as number,
+    mtime: value.mtime as number,
+    path: value.path as number,
+  };
+}
+
+function isColumnKey(value: unknown): value is SftpColumnKey {
+  return value === 'name' || value === 'type' || value === 'size' || value === 'mtime' || value === 'path';
 }
 
 export function validateChildName(value: unknown): string {

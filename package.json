@@ -50,6 +50,8 @@
     "onCommand:easysshManager.openRemoteFileForDevelopment",
     "onCommand:easysshManager.testConnection",
     "onCommand:easysshManager.refreshConnections",
+    "onCommand:easysshManager.openSettings",
+    "onCommand:easysshManager.collapseAllConnections",
     "onFileSystem:remote-sftp"
   ],
   "capabilities": {
@@ -64,7 +66,7 @@
         {
           "id": "easysshManager",
           "title": "EasySSH Manager",
-          "icon": "$(server)"
+          "icon": "media/easyssh-manager.svg"
         }
       ]
     },
@@ -119,7 +121,8 @@
       },
       {
         "command": "easysshManager.importSshConfig",
-        "title": "EasySSH Manager: Import OpenSSH Config"
+        "title": "EasySSH Manager: Import OpenSSH Config",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "easysshManager.openSsh",
@@ -155,28 +158,48 @@
         "command": "easysshManager.refreshConnections",
         "title": "EasySSH Manager: Refresh Connections",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "easysshManager.collapseAllConnections",
+        "title": "EasySSH Manager: Collapse All Connections",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "easysshManager.openSettings",
+        "title": "EasySSH Manager: Open Settings",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "easysshManager.addConnection",
-          "when": "view == easysshManager.connections",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showAddConnection",
           "group": "navigation"
         },
         {
           "command": "easysshManager.addFolder",
-          "when": "view == easysshManager.connections",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showAddFolder",
           "group": "navigation"
         },
         {
           "command": "easysshManager.importSshConfig",
-          "when": "view == easysshManager.connections",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showImport",
           "group": "navigation"
         },
         {
           "command": "easysshManager.refreshConnections",
-          "when": "view == easysshManager.connections",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showRefresh",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.collapseAllConnections",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showCollapseAll",
+          "group": "navigation"
+        },
+        {
+          "command": "easysshManager.openSettings",
+          "when": "view == easysshManager.connections && config.easysshManager.connections.titleActions.showSettings",
           "group": "navigation"
         }
       ],
@@ -298,6 +321,36 @@
             "debug"
           ],
           "description": "Minimum log level written to the EasySSH Manager output channel."
+        },
+        "easysshManager.connections.titleActions.showAddConnection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Add Connection in the Connections view title."
+        },
+        "easysshManager.connections.titleActions.showAddFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Add Folder in the Connections view title."
+        },
+        "easysshManager.connections.titleActions.showImport": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Import OpenSSH Config in the Connections view title."
+        },
+        "easysshManager.connections.titleActions.showRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Refresh in the Connections view title."
+        },
+        "easysshManager.connections.titleActions.showCollapseAll": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Collapse All in the Connections view title."
+        },
+        "easysshManager.connections.titleActions.showSettings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Settings in the Connections view title."
         }
       }
     }
@@ -328,6 +381,7 @@
     "@types/ssh2": "1.15.5",
     "@types/vscode": "1.103.0",
     "@vitest/coverage-v8": "3.2.4",
+    "@vscode/codicons": "0.0.46-24",
     "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "3.6.2",
     "eslint": "9.28.0",

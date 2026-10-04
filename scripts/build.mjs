@@ -55,10 +55,21 @@ const webview = {
   ...base,
   platform: 'browser',
   format: 'iife',
+  assetNames: 'webview/[name]-[hash]',
+  loader: { '.ttf': 'file' },
   entryPoints: {
     'webview/main': resolve(root, 'src/views/shared/webview/main.ts'),
+    'webview/webview-theme': resolve(root, 'src/views/shared/webview/webview-theme.css'),
     'webview/sftp-browser': resolve(root, 'src/views/sftp/webview/main.ts'),
     'webview/sftp-browser-style': resolve(root, 'src/views/sftp/webview/sftp-browser.css'),
+    'webview/connection-editor-style': resolve(
+      root,
+      'src/views/connections/webview/connection-editor.css',
+    ),
+    'webview/import-preview-style': resolve(
+      root,
+      'src/views/connections/webview/import-preview.css',
+    ),
   },
   outdir,
 };

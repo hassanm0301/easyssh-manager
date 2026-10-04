@@ -1,0 +1,113 @@
+.import-page {
+  width: min(100%, 68rem);
+}
+
+.import-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--easyssh-space-3);
+  margin-block-end: var(--easyssh-space-4);
+}
+
+.import-toolbar p {
+  margin: 0;
+}
+
+.candidate-list {
+  display: grid;
+  gap: var(--easyssh-space-3);
+  margin: 0 0 var(--easyssh-space-4);
+}
+
+.candidate {
+  padding: var(--easyssh-space-4);
+  transition:
+    border-color 100ms ease,
+    background-color 100ms ease;
+}
+
+.candidate:has(input[type='checkbox']:checked) {
+  border-color: var(--vscode-focusBorder);
+}
+
+.candidate.is-blocked {
+  opacity: 0.72;
+}
+
+.candidate-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--easyssh-space-3);
+  margin-block-end: var(--easyssh-space-3);
+}
+
+.candidate-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--easyssh-space-2);
+  margin: 0;
+  cursor: pointer;
+}
+
+.candidate-choice input {
+  margin-block-start: 0.22rem;
+}
+
+.candidate-title {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.candidate-title strong {
+  font-size: 1rem;
+}
+
+.candidate-target {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--easyssh-space-3) var(--easyssh-space-4);
+}
+
+.candidate-grid label {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.candidate-issues {
+  margin: var(--easyssh-space-3) 0 0;
+}
+
+.import-actions .status-message {
+  flex: 1;
+}
+
+@media (max-width: 40rem) {
+  .import-toolbar,
+  .candidate-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .candidate-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (forced-colors: active) {
+  .candidate:has(input[type='checkbox']:checked) {
+    outline: 2px solid Highlight;
+  }
+}

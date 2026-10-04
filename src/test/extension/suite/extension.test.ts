@@ -47,6 +47,8 @@ suite('EasySSH Manager extension', () => {
       'deleteFolder',
       'importSshConfig',
       'refreshConnections',
+      'collapseAllConnections',
+      'openSettings',
       'openSsh',
       'openSftp',
       'openRemoteFile',
@@ -60,7 +62,9 @@ suite('EasySSH Manager extension', () => {
 });
 
 function openImportPreviewForAcceptance(): ImportPreview {
-  const preview = new ImportPreview(vscode);
+  const extension = vscode.extensions.getExtension('hassanm0301.easyssh-manager');
+  assert.ok(extension, 'extension should be discoverable');
+  const preview = new ImportPreview(vscode, extension.extensionUri);
   preview.open(
     [
       {
