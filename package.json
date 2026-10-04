@@ -44,6 +44,8 @@
     "onCommand:easysshManager.importSshConfig",
     "onCommand:easysshManager.openSsh",
     "onCommand:easysshManager.openSftp",
+    "onCommand:easysshManager.openRemoteFile",
+    "onCommand:easysshManager.openRemoteFileForDevelopment",
     "onCommand:easysshManager.testConnection",
     "onCommand:easysshManager.refreshConnections",
     "onFileSystem:remote-sftp"
@@ -126,6 +128,14 @@
         "command": "easysshManager.openSftp",
         "title": "EasySSH Manager: Open SFTP",
         "icon": "$(folder-opened)"
+      },
+      {
+        "command": "easysshManager.openRemoteFile",
+        "title": "EasySSH Manager: Open Remote SFTP File"
+      },
+      {
+        "command": "easysshManager.openRemoteFileForDevelopment",
+        "title": "EasySSH Manager: Open Remote File (Developer)"
       },
       {
         "command": "easysshManager.testConnection",

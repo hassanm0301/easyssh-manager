@@ -49,6 +49,8 @@ suite('EasySSH Manager extension', () => {
       'refreshConnections',
       'openSsh',
       'openSftp',
+      'openRemoteFile',
+      'openRemoteFileForDevelopment',
       'testConnection',
     ].map((name) => `easysshManager.${name}`);
     const registered = new Set(await vscode.commands.getCommands(true));

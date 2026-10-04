@@ -21,6 +21,13 @@ import { DefaultSshSessionManager } from '../ssh/SshSessionManager';
 import { SshTerminalRegistry } from '../ssh/SshTerminalSession';
 import { TestConnectionService } from '../ssh/TestConnectionService';
 import { VsCodeHostTrustPrompt } from '../ssh/VsCodeHostTrustPrompt';
+import { AtomicSftpWriter, type RemoteConflictReason } from '../sftp/AtomicSftpWriter';
+import { RemoteFileOpenService } from '../sftp/RemoteFileOpenService';
+import { RemoteResourceCache } from '../sftp/RemoteResourceCache';
+import { RemoteSftpFileSystemProvider } from '../sftp/RemoteSftpFileSystemProvider';
+import { SessionSftpClientFactory } from '../sftp/SftpClientFactory';
+import { DefaultSftpConnectionPool } from '../sftp/SftpConnectionPool';
+import { DefaultSftpUriCodec } from '../sftp/SftpUriCodec';
 import { ConnectionEditor } from '../views/connections/ConnectionEditor';
 import { ImportPreview, type ImportSelection } from '../views/connections/ImportPreview';
 import {
@@ -41,6 +48,12 @@ export class ExtensionApplication implements vscode.Disposable {
   private readonly editor: ConnectionEditor;
   private readonly importPreview: ImportPreview;
   private readonly sshSessions: DefaultSshSessionManager;
+  private readonly sftpPool: DefaultSftpConnectionPool;
+  private readonly sftpUriCodec: DefaultSftpUriCodec;
+  private readonly sftpCache: RemoteResourceCache;
+  private readonly sftpProvider: RemoteSftpFileSystemProvider;
+  private readonly remoteFileOpener: RemoteFileOpenService;
+  private readonly knownConnectionIds = new Set<string>();
   private readonly terminals: SshTerminalRegistry;
   private readonly connectionTester: TestConnectionService;
 
@@ -71,6 +84,53 @@ export class ExtensionApplication implements vscode.Disposable {
     const clients = new SshClientFactory(hostKeys, () => this.configuration.getSnapshot());
     this.sshSessions = this.disposables.add(
       new DefaultSshSessionManager(connectionResolver, credentialResolver, clients),
+    );
+    this.sftpPool = this.disposables.add(
+      new DefaultSftpConnectionPool(
+        new SessionSftpClientFactory(
+          this.sshSessions,
+          () => this.configuration.getSnapshot().connectTimeoutMs,
+        ),
+        this.configuration,
+      ),
+    );
+    this.sftpUriCodec = new DefaultSftpUriCodec(vscodeApi.Uri, (connectionId) =>
+      this.knownConnectionIds.has(connectionId),
+    );
+    this.sftpCache = new RemoteResourceCache(this.sftpUriCodec);
+    const sftpWriter = new AtomicSftpWriter(
+      this.sftpUriCodec,
+      this.sftpCache,
+      {
+        confirmOverwrite: async (uri, reason) =>
+          (await vscodeApi.window.showWarningMessage(
+            overwritePrompt(uri.path, reason),
+            { modal: true },
+            'Overwrite Remote',
+          )) === 'Overwrite Remote',
+        confirmNonAtomicOverwrite: async (uri) =>
+          (await vscodeApi.window.showWarningMessage(
+            `The server cannot atomically replace '${uri.path}'. Continue with a non-atomic replacement?`,
+            { modal: true },
+            'Continue Non-Atomically',
+          )) === 'Continue Non-Atomically',
+      },
+      this.logger,
+    );
+    this.sftpProvider = this.disposables.add(
+      new RemoteSftpFileSystemProvider(
+        vscodeApi,
+        this.sftpUriCodec,
+        this.sftpPool,
+        this.sftpCache,
+        sftpWriter,
+      ),
+    );
+    this.remoteFileOpener = new RemoteFileOpenService(
+      vscodeApi,
+      this.sftpUriCodec,
+      this.sftpPool,
+      () => this.configuration.getSnapshot().maxInlineFileSizeMiB,
     );
     this.terminals = this.disposables.add(
       new SshTerminalRegistry(vscodeApi, this.sshSessions, this.logger),
@@ -115,7 +175,27 @@ export class ExtensionApplication implements vscode.Disposable {
   }
 
   async activate(): Promise<void> {
-    this.disposables.add(this.state.onDidChange((change) => this.treeProvider.refresh(change)));
+    this.replaceKnownConnections((await this.state.load()).connections.map(({ id }) => id));
+    this.disposables.add(
+      this.state.onDidChange((change) => {
+        const previousIds = new Set(change.previous.connections.map(({ id }) => id));
+        const currentIds = change.current.connections.map(({ id }) => id);
+        this.replaceKnownConnections(currentIds);
+        for (const connectionId of previousIds) {
+          if (!this.knownConnectionIds.has(connectionId)) {
+            this.sftpCache.invalidateConnection(connectionId);
+            void this.sftpPool.invalidate(connectionId, 'connection removed');
+          }
+        }
+        this.treeProvider.refresh(change);
+      }),
+    );
+    this.disposables.add(
+      this.vscodeApi.workspace.registerFileSystemProvider('remote-sftp', this.sftpProvider, {
+        isCaseSensitive: true,
+        isReadonly: false,
+      }),
+    );
     this.commands.register({
       id: 'easysshManager.refreshConnections',
       execute: async () => {
@@ -326,9 +406,35 @@ export class ExtensionApplication implements vscode.Disposable {
     });
     this.commands.register({
       id: 'easysshManager.openSftp',
-      execute: async () => {
-        void this.vscodeApi.window.showInformationMessage(
-          'The SFTP browser is available after the SFTP filesystem milestone.',
+      execute: async (item: unknown) => {
+        await this.openRemoteFileForDevelopment(
+          item === undefined ? undefined : selectedId(item, ConnectionNode),
+        );
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.openRemoteFile',
+      execute: async (value: unknown) => {
+        if (value === undefined) {
+          await this.openRemoteFileForDevelopment();
+          return;
+        }
+        const uri =
+          value instanceof this.vscodeApi.Uri
+            ? value
+            : typeof value === 'string'
+              ? this.vscodeApi.Uri.parse(value, true)
+              : undefined;
+        if (!uri) throw new EasySshError('VALIDATION', 'A remote SFTP URI is required.');
+        await this.remoteFileOpener.open(uri);
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.openRemoteFileForDevelopment',
+      execute: async (connectionId?: unknown, remotePath?: unknown) => {
+        await this.openRemoteFileForDevelopment(
+          typeof connectionId === 'string' ? connectionId : undefined,
+          typeof remotePath === 'string' ? remotePath : undefined,
         );
       },
     });
@@ -352,6 +458,46 @@ export class ExtensionApplication implements vscode.Disposable {
         );
       })
       .catch(() => undefined);
+  }
+
+  private replaceKnownConnections(connectionIds: readonly string[]): void {
+    this.knownConnectionIds.clear();
+    for (const connectionId of connectionIds) this.knownConnectionIds.add(connectionId);
+  }
+
+  private async openRemoteFileForDevelopment(
+    requestedConnectionId?: string,
+    requestedPath?: string,
+  ): Promise<void> {
+    const state = await this.state.load();
+    let connection = state.connections.find(({ id }) => id === requestedConnectionId);
+    if (!connection) {
+      const picked = await this.vscodeApi.window.showQuickPick(
+        state.connections.map((candidate) => ({
+          label: candidate.name,
+          description: `${candidate.username}@${candidate.host}:${candidate.port}`,
+          connection: candidate,
+        })),
+        { placeHolder: 'Select an SFTP connection' },
+      );
+      connection = picked?.connection;
+    }
+    if (!connection) {
+      if (state.connections.length === 0) {
+        void this.vscodeApi.window.showInformationMessage('Add an SSH connection first.');
+      }
+      return;
+    }
+    const remotePath =
+      requestedPath ??
+      (await this.vscodeApi.window.showInputBox({
+        prompt: 'Absolute remote file path',
+        value: connection.defaultRemotePath,
+        validateInput: (value) =>
+          value.startsWith('/') ? undefined : 'Enter an absolute POSIX path.',
+      }));
+    if (remotePath === undefined) return;
+    await this.remoteFileOpener.open(this.sftpUriCodec.create(connection.id, remotePath));
   }
 
   private async importCandidate(
@@ -447,4 +593,14 @@ function normalizedHost(value: string): string {
   let host = value.trim().toLowerCase();
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   return host.endsWith('.') ? host.slice(0, -1) : host;
+}
+
+function overwritePrompt(path: string, reason: RemoteConflictReason): string {
+  const detail =
+    reason === 'changed'
+      ? 'changed since it was opened'
+      : reason === 'deleted'
+        ? 'was deleted after it was opened'
+        : 'was created by another process';
+  return `The remote file '${path}' ${detail}. Overwrite the remote version?`;
 }
