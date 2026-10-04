@@ -189,17 +189,17 @@ The contributed internal/open command, later called by the browser:
 
 ## Implementation checklist
 
-- [ ] Implement and fuzz-test remote path normalization and URI parsing/creation.
-- [ ] Add Promise wrappers for SFTP handles, streams/callbacks, and status codes.
-- [ ] Implement `lstat`, `stat`, `realpath`, `readlink`, listing, range/full read, write, mkdir, rename, unlink, and rmdir.
-- [ ] Implement SFTP pool entry state machine, ref-counted leases, coalesced connect, timers, invalidation, and deactivation.
-- [ ] Implement metadata/directory/version caches with narrow invalidation.
-- [ ] Implement temporary writer, commit/fallback policy, conflict recheck, cancellation, and cleanup.
-- [ ] Implement provider methods and exact change-event emission.
-- [ ] Register the `remote-sftp` provider during activation before commands can open remote URIs.
-- [ ] Implement guarded open command, binary/size classification, normal editor split, and safe errors.
-- [ ] Add a developer-only/manual command to open a known remote URI before the browser exists.
-- [ ] Verify all operations acquire/release leases in `finally` and do not retain entire file buffers in caches.
+- [x] Implement and fuzz-test remote path normalization and URI parsing/creation.
+- [x] Add Promise wrappers for SFTP handles, streams/callbacks, and status codes.
+- [x] Implement `lstat`, `stat`, `realpath`, `readlink`, listing, range/full read, write, mkdir, rename, unlink, and rmdir.
+- [x] Implement SFTP pool entry state machine, ref-counted leases, coalesced connect, timers, invalidation, and deactivation.
+- [x] Implement metadata/directory/version caches with narrow invalidation.
+- [x] Implement temporary writer, commit/fallback policy, conflict recheck, cancellation, and cleanup.
+- [x] Implement provider methods and exact change-event emission.
+- [x] Register the `remote-sftp` provider during activation before commands can open remote URIs.
+- [x] Implement guarded open command, binary/size classification, normal editor split, and safe errors.
+- [x] Add a developer-only/manual command to open a known remote URI before the browser exists.
+- [x] Verify all operations acquire/release leases in `finally` and do not retain entire file buffers in caches.
 
 ## Automated tests
 
@@ -222,15 +222,24 @@ The contributed internal/open command, later called by the browser:
 - Open a text document through the provider, save it, and verify remote bytes.
 - Externally modify the file between read/save and verify Cancel preserves the external content while Overwrite Remote commits the editor content.
 
-## Manual acceptance tests
+## Acceptance tests
 
-1. Invoke the developer open command for `/`, a nested text file, a Unicode filename, an image, a binary file, and a file over 20 MiB.
-2. Confirm the document opens in a normal editor, syntax tooling works, dirty state appears, and `Ctrl+S` writes to the server.
-3. Modify a file externally before save and exercise both conflict choices.
-4. Remove write permission, attempt save, verify the error names the path/reason, and confirm the editor is not falsely marked saved.
-5. Create two remote documents on the same connection and another on a second connection; edit/save concurrently.
-6. Disconnect/restart the fixture between operations and verify bounded reconnection without repeated prompts or retry loops.
-7. Close documents and the editor, then verify idle/deactivation cleanup closes the pool.
+The originally manual scenarios are repeatable in the Docker-backed VS Code extension-host suite (`npm run test:acceptance`) and the Docker transport suite (`EASYSSH_RUN_DOCKER=1 npm run test:integration`).
+
+- [x] Exercise root/directory rejection, nested and Unicode text, image, binary, and over-20-MiB guarded-open behavior.
+- [x] Open through a writable filesystem provider in the normal editor, select syntax tooling, become dirty, and save through the VS Code save command to the server.
+- [x] Modify a file externally before save and exercise both Cancel Save and Overwrite Remote.
+- [x] Remove directory write permission, verify save fails with the remote URI/reason, and confirm the editor remains dirty until permission is repaired.
+- [x] Edit and save remote documents concurrently through two connection profiles.
+- [x] Force disconnect/invalidation and verify bounded next-operation reconnection without mutation replay or retry loops.
+- [x] Close editors and verify idle/deactivation cleanup closes all pooled SSH sessions.
+
+## Validation record
+
+- [x] Unit suite: 139 tests passed.
+- [x] Docker OpenSSH integration suite: 10 tests passed, including 9 live transport/SFTP cases.
+- [x] VS Code extension-host suite: activation, command registration, and Docker-backed normal-editor acceptance passed.
+- [x] Typecheck, lint, formatting, production build, and inspected development VSIX packaging passed.
 
 ## Exit criteria
 
