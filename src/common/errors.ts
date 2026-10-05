@@ -19,7 +19,17 @@ export type ErrorCode =
   | 'CONNECTION_LOST'
   | 'CANCELLED'
   | 'OUTPUT_LIMIT'
-  | 'WORKSPACE_UNTRUSTED';
+  | 'WORKSPACE_UNTRUSTED'
+  | 'ACCESS_DENIED'
+  | 'POLICY_DISABLED'
+  | 'PATH_NOT_ALLOWED'
+  | 'CONFIRMATION_DENIED'
+  | 'CONFIRMATION_EXPIRED'
+  | 'STALE_VERSION'
+  | 'CONNECTION_FAILED'
+  | 'RATE_LIMITED'
+  | 'UNAVAILABLE'
+  | 'INVALID_INPUT';
 
 export class EasySshError extends Error {
   constructor(

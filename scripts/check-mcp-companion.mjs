@@ -21,8 +21,20 @@ const forbiddenAuthority = /\b(?:createServer|createHttpServer|listen)\s*\(/;
 for (const file of sourceFiles) {
   const source = await readFile(resolve(sourceRoot, file), 'utf8');
   if (forbiddenImport.test(source)) throw new Error(`Forbidden companion import in ${file}.`);
-  if (file === 'companion.ts' && forbiddenAuthority.test(source))
-    throw new Error('The MCP companion cannot listen for inbound network connections.');
+  if (file === 'companion.ts') {
+    if (forbiddenAuthority.test(source))
+      throw new Error('The MCP companion cannot listen for inbound network connections.');
+    if (
+      /\b(?:SecretStorage|privateKeyPath|credentialStore|knownHosts|openSftp|openShell)\b/.test(
+        source,
+      )
+    )
+      throw new Error(
+        'The MCP companion cannot access credentials, host trust, SSH, or SFTP authority.',
+      );
+    if (/['"](?:node:child_process|node:worker_threads)['"]/.test(source))
+      throw new Error('The MCP companion cannot spawn subprocesses or background workers.');
+  }
 }
 
 const bundlePath = resolve(root, 'dist/mcp/companion.js');

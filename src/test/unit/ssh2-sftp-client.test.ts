@@ -88,6 +88,14 @@ function fixture(): SftpFixture {
         { filename: 'link', longname: 'link', attrs: stats(0o120777) },
       ]);
     },
+    opendir(path: string, callback: ValueCallback<Buffer>): void {
+      calls.push(`opendir:${path}`);
+      complete(callback, Buffer.from('handle'));
+    },
+    close(handle: Buffer, callback: VoidCallback): void {
+      calls.push(`closedir:${handle.toString()}`);
+      completeVoid(callback);
+    },
     createReadStream(path: string, options: ReadStreamOptions): PassThrough {
       calls.push(`read:${path}`);
       readOptions.push(options);
@@ -165,6 +173,18 @@ describe('ssh2 SFTP domain adapter', () => {
       { name: 'link', stat: expect.objectContaining({ kind: 'symbolicLink' }) },
     ]);
     expect(fake.calls).toContain('lstat:/file.txt');
+  });
+
+  it('reads directory handles with an entry cap and closes the handle', async () => {
+    const fake = fixture();
+    const client = new Ssh2SftpClient(fake.wrapper);
+    await expect(client.readDirectoryBounded('/', 1)).resolves.toMatchObject({
+      entries: [{ name: 'file.txt' }],
+      truncated: true,
+    });
+    expect(fake.calls).toContain('opendir:/');
+    expect(fake.calls).toContain('readdir:handle');
+    expect(fake.calls).toContain('closedir:handle');
   });
 
   it('reads exact bytes and applies inclusive ssh2 range boundaries', async () => {

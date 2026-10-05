@@ -84,6 +84,55 @@ export class Ssh2SftpClient implements SftpClient {
     return entries.map((entry) => remoteDirectoryEntry(entry, remotePath));
   }
 
+  async readDirectoryBounded(
+    path: string,
+    limit: number,
+  ): Promise<{ entries: RemoteDirectoryEntry[]; truncated: boolean }> {
+    const remotePath = this.path(path);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100_000)
+      throw new EasySshError('VALIDATION', 'Invalid directory listing limit.');
+    const handle = await this.callback<Buffer>('opendir', remotePath, (done) =>
+      this.sftp.opendir(remotePath, done),
+    );
+    const entries: RemoteDirectoryEntry[] = [];
+    let truncated = false;
+    let failure: unknown;
+    try {
+      while (true) {
+        let batch: FileEntryWithStats[];
+        try {
+          batch = await this.callback<FileEntryWithStats[]>('readdir', remotePath, (done) =>
+            this.sftp.readdir(handle, done),
+          );
+        } catch (error) {
+          if (
+            (error as SftpError)?.code === 1 ||
+            (error instanceof EasySshError && (error.cause as SftpError | undefined)?.code === 1)
+          )
+            break; // SFTP STATUS_CODE.EOF
+          throw error;
+        }
+        if (!Array.isArray(batch)) throw invalidResponse(remotePath, 'directory listing');
+        const available = limit - entries.length;
+        const selected = batch.slice(0, available);
+        entries.push(...selected.map((entry) => remoteDirectoryEntry(entry, remotePath)));
+        if (selected.length < batch.length) {
+          truncated = true;
+          break;
+        }
+      }
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await this.callbackVoid('close', remotePath, (done) => this.sftp.close(handle, done));
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    if (failure) throw failure;
+    return { entries, truncated };
+  }
+
   async readFile(path: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
     const remotePath = this.path(path);
     const validatedRange = validateRange(range);

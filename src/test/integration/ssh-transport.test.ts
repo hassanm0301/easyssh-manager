@@ -31,6 +31,10 @@ import { SessionSftpClientFactory } from '../../sftp/SftpClientFactory';
 import { DefaultSftpConnectionPool } from '../../sftp/SftpConnectionPool';
 import { DefaultSftpUriCodec, type SftpUriComponents } from '../../sftp/SftpUriCodec';
 import { Ssh2SftpClient } from '../../sftp/Ssh2SftpClient';
+import { McpAgentService } from '../../mcp/McpAgentService';
+import { McpAuditLog } from '../../mcp/McpAuditLog';
+import { McpBridge } from '../../mcp/McpBridge';
+import { validateIpcResponse } from '../../mcp/ipcProtocol';
 import type { SftpClient } from '../../sftp/ports';
 import type * as vscode from 'vscode';
 
@@ -239,6 +243,328 @@ docker('Docker SSH transport', () => {
       await Promise.all([first.close(), second.close()]);
     }
   });
+
+  it('routes a real MCP stdio companion through authenticated extension IPC to Docker SSH/SFTP', async () => {
+    const root = '/home/easyssh-test/sftp-fixture';
+    const connectionId = passwordProfile.id;
+    await state.update((draft) => {
+      const connection = draft.connections.find((item) => item.id === passwordProfile.id)!;
+      connection.agentAccess = {
+        ...defaultAgentAccessPolicy(),
+        enabled: true,
+        allowReadFiles: true,
+        allowWriteFiles: true,
+        allowExec: true,
+        confirmationMode: 'never',
+        allowedRoots: [root],
+      };
+    });
+    const cache = new RemoteResourceCache(integrationUriCodec(connectionId));
+    const pool = new DefaultSftpConnectionPool(
+      new SessionSftpClientFactory(manager, () => settings.connectTimeoutMs),
+      new PoolConfiguration(settings.sftpIdleTimeoutMs),
+    );
+    const audit = new McpAuditLog(join(temporary, 'mcp-integration-audit.jsonl'));
+    let promptAnswer: string | undefined;
+    let promptHangs = false;
+    const promptMessages: string[] = [];
+    const prompt = {
+      showWarningMessage: vi.fn(async (message: string) => {
+        promptMessages.push(message);
+        if (promptHangs) return await new Promise<string | undefined>(() => undefined);
+        return promptAnswer;
+      }),
+    };
+    const service = new McpAgentService(state, manager, pool, prompt as never, audit, cache);
+    const storage = join(temporary, 'mcp-integration-storage');
+    const bridge = new McpBridge(storage, (method, params, signal, requestId) =>
+      service.dispatch(method, params, signal, requestId),
+    );
+    let companion: ChildProcess | undefined;
+    const rows: Array<{ id?: number; result?: { content?: Array<{ text?: string }> } }> = [];
+    let buffered = '';
+    const waiters = new Map<
+      number,
+      (value: { id?: number; result?: { content?: Array<{ text?: string }> } }) => void
+    >();
+    try {
+      await bridge.start();
+      companion = spawn(
+        process.execPath,
+        [
+          resolve('node_modules/tsx/dist/cli.mjs'),
+          resolve('src/mcp/companion.ts'),
+          '--discovery',
+          bridge.discoveryPath,
+        ],
+        { stdio: 'pipe' },
+      );
+      const activationToken = (
+        JSON.parse(readFileSync(bridge.discoveryPath, 'utf8')) as { token: string }
+      ).token;
+      expect(companion.spawnargs.join(' ')).not.toContain(activationToken);
+      expect(companion.spawnargs.join(' ')).not.toContain(password);
+      expect(companion.spawnargs.join(' ')).not.toContain(keyPassphrase);
+      companion.stdout?.setEncoding('utf8');
+      companion.stdout?.on('data', (chunk: string) => {
+        buffered += chunk;
+        for (;;) {
+          const newline = buffered.indexOf('\n');
+          if (newline < 0) break;
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (!line) continue;
+          const response = JSON.parse(line) as {
+            id?: number;
+            result?: { content?: Array<{ text?: string }> };
+          };
+          const resolveResponse = response.id === undefined ? undefined : waiters.get(response.id);
+          if (resolveResponse) {
+            waiters.delete(response.id!);
+            resolveResponse(response);
+          } else rows.push(response);
+        }
+      });
+      const request = (id: number, method: string, params: Record<string, unknown>) => {
+        companion?.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+        const existing = rows.findIndex((row) => row.id === id);
+        if (existing >= 0) return Promise.resolve(rows.splice(existing, 1)[0]!);
+        return new Promise<{ id?: number; result?: { content?: Array<{ text?: string }> } }>(
+          (resolveResponse) => waiters.set(id, resolveResponse),
+        );
+      };
+      const initialize = await request(1, 'initialize', {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'docker-test', version: '1' },
+      });
+      expect(initialize.result).toBeDefined();
+      companion.stdin?.write(
+        `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
+      );
+
+      const invoke = async (id: number, name: string, args: Record<string, unknown>) => {
+        const response = await request(id, 'tools/call', { name, arguments: args });
+        const text = response.result?.content?.[0]?.text;
+        if (!text) throw new Error('MCP tool returned no text result.');
+        if (!text.startsWith('CANCELLED:') && !text.includes(': ')) {
+          try {
+            return JSON.parse(text) as Record<string, unknown>;
+          } catch {
+            /* stable tool error text */
+          }
+        }
+        return text;
+      };
+      const discovered = await invoke(2, 'remote_list_connections', {});
+      expect(discovered).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: connectionId })]),
+      );
+      const directExec = await service.dispatch(
+        'ssh_exec',
+        { connectionId, command: 'printf mcp-docker-exec' },
+        new AbortController().signal,
+        'direct-test',
+      );
+      expect(directExec).toMatchObject({ stdout: 'mcp-docker-exec', exitCode: 0 });
+      try {
+        validateIpcResponse(
+          { protocolVersion: 1, requestId: 'validation', ok: true, result: directExec },
+          'validation',
+        );
+      } catch {
+        throw new Error(
+          `Unsafe direct exec result: ${JSON.stringify(directExec)}; entries=${JSON.stringify(Object.entries(directExec as object))}`,
+        );
+      }
+      const exec = await invoke(3, 'ssh_exec', { connectionId, command: 'printf mcp-docker-exec' });
+      expect(exec).toMatchObject({ stdout: 'mcp-docker-exec', exitCode: 0 });
+
+      const listing = await invoke(4, 'sftp_list', { connectionId, path: root });
+      expect(listing).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'text.txt', kind: 'file' })]),
+      );
+      const stat = (await invoke(5, 'sftp_stat', {
+        connectionId,
+        path: `${root}/text.txt`,
+      })) as Record<string, unknown>;
+      expect(stat).toMatchObject({ kind: 'file', size: 14 });
+      const read = (await invoke(6, 'sftp_read', {
+        connectionId,
+        path: `${root}/text.txt`,
+        encoding: 'utf8',
+        offset: 6,
+        length: 7,
+      })) as Record<string, unknown>;
+      expect(read).toMatchObject({ data: 'fixture', offset: 6, bytesRead: 7 });
+      const createdPath = `${root}/mcp-created.txt`;
+      const created = (await invoke(7, 'sftp_write', {
+        connectionId,
+        path: createdPath,
+        encoding: 'utf8',
+        data: 'mcp-first',
+      })) as Record<string, unknown>;
+      expect(created.version).toEqual(expect.any(String));
+      const stale = await invoke(8, 'sftp_write', {
+        connectionId,
+        path: createdPath,
+        encoding: 'utf8',
+        data: 'mcp-stale',
+        expectedVersion: 'forged-version',
+      });
+      expect(String(stale)).toContain('STALE_VERSION');
+      const overwritten = (await invoke(9, 'sftp_write', {
+        connectionId,
+        path: createdPath,
+        encoding: 'utf8',
+        data: 'mcp-second',
+        expectedVersion: created.version,
+      })) as Record<string, unknown>;
+      expect(overwritten.version).toEqual(expect.any(String));
+      const forced = (await invoke(10, 'sftp_write', {
+        connectionId,
+        path: createdPath,
+        encoding: 'utf8',
+        data: 'mcp-forced',
+        force: true,
+      })) as Record<string, unknown>;
+      expect(forced.version).toEqual(expect.any(String));
+      const base64Path = `${root}/mcp-base64.txt`;
+      await invoke(11, 'sftp_write', {
+        connectionId,
+        path: base64Path,
+        encoding: 'base64',
+        data: Buffer.from('mcp-binary').toString('base64'),
+      });
+      const base64Read = (await invoke(12, 'sftp_read', {
+        connectionId,
+        path: base64Path,
+        encoding: 'base64',
+      })) as Record<string, unknown>;
+      expect(base64Read.data).toBe(Buffer.from('mcp-binary').toString('base64'));
+      await invoke(13, 'sftp_mkdir', { connectionId, path: `${root}/mcp-directory` });
+      await invoke(14, 'sftp_rename', {
+        connectionId,
+        source: createdPath,
+        destination: `${root}/mcp-renamed.txt`,
+      });
+      await invoke(15, 'sftp_delete', { connectionId, path: `${root}/mcp-renamed.txt` });
+      await invoke(16, 'sftp_delete', { connectionId, path: base64Path });
+      await invoke(17, 'sftp_delete', { connectionId, path: `${root}/mcp-directory` });
+
+      await state.update((draft) => {
+        draft.connections.find(
+          (item) => item.id === passwordProfile.id,
+        )!.agentAccess.allowReadFiles = false;
+      });
+      const denied = await invoke(18, 'sftp_read', {
+        connectionId,
+        path: `${root}/text.txt`,
+        encoding: 'utf8',
+      });
+      expect(String(denied)).toContain('ACCESS_DENIED');
+      const auditBytes = readFileSync(join(temporary, 'mcp-integration-audit.jsonl'), 'utf8');
+      for (const sentinel of [
+        'printf mcp-docker-exec',
+        'mcp-docker-exec',
+        'mcp-first',
+        'mcp-second',
+        'mcp-forced',
+        'mcp-binary',
+        password,
+        keyPassphrase,
+        plainKey,
+        encryptedKey,
+      ])
+        expect(auditBytes).not.toContain(sentinel);
+      expect(auditBytes).toContain('commandFingerprint');
+      expect(auditBytes).toContain('ACCESS_DENIED');
+      expect(String(denied)).not.toContain('mcp-docker-exec');
+      const longExec = await invoke(19, 'ssh_exec', {
+        connectionId,
+        command: 'sleep 6 && printf mcp-long-exec',
+      });
+      expect(longExec).toMatchObject({ stdout: 'mcp-long-exec', exitCode: 0 });
+
+      await state.update((draft) => {
+        draft.connections.find(
+          (item) => item.id === passwordProfile.id,
+        )!.agentAccess.confirmationMode = 'always';
+      });
+      promptAnswer = 'Approve';
+      const approved = await invoke(20, 'ssh_exec', {
+        connectionId,
+        command: 'printf mcp-approved-command',
+      });
+      expect(approved).toMatchObject({ stdout: 'mcp-approved-command', exitCode: 0 });
+      expect(prompt.showWarningMessage).toHaveBeenCalled();
+      expect(promptMessages.at(-1)).not.toContain('mcp-approved-command');
+      promptAnswer = undefined;
+      const rejected = await invoke(21, 'ssh_exec', {
+        connectionId,
+        command: 'printf should-not-run',
+      });
+      expect(String(rejected)).toContain('CONFIRMATION_DENIED');
+      promptHangs = true;
+      const expired = await invoke(22, 'ssh_exec', {
+        connectionId,
+        command: 'printf should-expire',
+      });
+      promptHangs = false;
+      expect(String(expired)).toContain('CONFIRMATION_EXPIRED');
+
+      const activeSentinel = `/tmp/easyssh-mcp-active-${process.pid}`;
+      promptAnswer = 'Approve';
+      const activeExec = request(23, 'tools/call', {
+        name: 'ssh_exec',
+        arguments: {
+          connectionId,
+          command: `touch ${activeSentinel} && sleep 30`,
+        },
+      });
+      await vi.waitFor(() => run('docker', ['exec', container, 'test', '-f', activeSentinel]), {
+        timeout: 10_000,
+      });
+      await state.update((draft) => {
+        draft.connections.find((item) => item.id === passwordProfile.id)!.agentAccess.enabled =
+          false;
+      });
+      service.revokeConnection(connectionId);
+      const cancelled = await activeExec;
+      expect(cancelled.result?.content?.[0]?.text).toContain('CANCELLED');
+      await vi.waitFor(
+        () => {
+          const sleepers = run('docker', [
+            'exec',
+            container,
+            'sh',
+            '-c',
+            'count=0; for file in /proc/[0-9]*/comm; do [ "$(cat "$file" 2>/dev/null)" = sleep ] && count=$((count + 1)); done; echo "$count"',
+          ]);
+          expect(Number(sleepers.trim())).toBe(0);
+        },
+        { timeout: 10_000 },
+      );
+      const futureExec = await invoke(24, 'ssh_exec', { connectionId, command: 'id' });
+      expect(String(futureExec)).toContain('POLICY_DISABLED');
+      const finalAudit = readFileSync(join(temporary, 'mcp-integration-audit.jsonl'), 'utf8');
+      expect(finalAudit).toContain('STALE_VERSION');
+      expect(finalAudit).toContain('CANCELLED');
+      for (const sentinel of [
+        'printf mcp-approved-command',
+        'mcp-approved-command',
+        'printf should-not-run',
+        'touch /tmp/easyssh-mcp-active-',
+        'sleep 30',
+      ])
+        expect(finalAudit).not.toContain(sentinel);
+    } finally {
+      companion?.kill('SIGTERM');
+      await bridge.dispose();
+      await pool.dispose();
+      await audit.close();
+    }
+  }, 150_000);
 
   it('reuses one real pooled subsystem, expires it idle, and reconnects only on a new acquire', async () => {
     const configuration = new PoolConfiguration(150);

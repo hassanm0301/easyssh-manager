@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { join } from 'node:path';
 
 import { CommandRegistry } from '../commands/CommandRegistry';
 import { DisposableStore } from '../common/disposables';
@@ -35,6 +38,15 @@ import { WorkspacePaneService, WorkspaceUploadService } from '../sftp/WorkspaceU
 import { ConnectionEditor } from '../views/connections/ConnectionEditor';
 import { ImportPreview, type ImportSelection } from '../views/connections/ImportPreview';
 import { SftpPanelManager } from '../views/sftp/SftpPanel';
+import { McpBridge } from '../mcp/McpBridge';
+import { McpAgentService } from '../mcp/McpAgentService';
+import { McpAuditLog } from '../mcp/McpAuditLog';
+import {
+  MCP_COMPANION_NODE_RANGE,
+  createMcpClientConfig,
+  resolveExecutablePath,
+  supportedCompanionNode,
+} from '../mcp/runtime';
 import {
   ConnectionNode,
   ConnectionsTreeProvider,
@@ -63,10 +75,13 @@ export class ExtensionApplication implements vscode.Disposable {
   private readonly knownConnectionIds = new Set<string>();
   private readonly terminals: SshTerminalRegistry;
   private readonly connectionTester: TestConnectionService;
+  private mcpBridge: McpBridge | undefined;
+  private mcpAudit: McpAuditLog | undefined;
+  private mcpService: McpAgentService | undefined;
 
   constructor(
     private readonly vscodeApi: typeof vscode,
-    context: vscode.ExtensionContext,
+    private readonly context: vscode.ExtensionContext,
   ) {
     this.configuration = this.disposables.add(new VsCodeConfigurationService(vscodeApi));
     this.logger = this.disposables.add(
@@ -238,6 +253,14 @@ export class ExtensionApplication implements vscode.Disposable {
             this.sftpCache.invalidateConnection(connectionId);
             void this.sftpPool.invalidate(connectionId, 'connection removed');
           }
+        }
+        for (const previous of change.previous.connections) {
+          const current = change.current.connections.find((item) => item.id === previous.id);
+          if (
+            !current ||
+            JSON.stringify(current.agentAccess) !== JSON.stringify(previous.agentAccess)
+          )
+            this.mcpService?.revokeConnection(previous.id);
         }
         this.sftpPanels.updateConnections(change.current.connections);
         this.treeProvider.refresh(change);
@@ -521,13 +544,179 @@ export class ExtensionApplication implements vscode.Disposable {
         );
       },
     });
+    this.commands.register({
+      id: 'easysshManager.configureMcp',
+      execute: async () => this.configureMcp(),
+    });
+    this.commands.register({
+      id: 'easysshManager.viewMcpAudit',
+      execute: async () => {
+        if (!this.mcpAudit)
+          throw new EasySshError('UNSUPPORTED', 'Configure MCP before viewing its audit log.');
+        const rawOffset = await this.vscodeApi.window.showInputBox({
+          prompt: 'Audit record offset (newest first; up to 500 records per page)',
+          value: '0',
+          validateInput: (value) =>
+            /^(?:0|[1-9]\d{0,8})$/.test(value) ? undefined : 'Enter a non-negative record offset.',
+        });
+        if (rawOffset === undefined) return;
+        const output = this.disposables.add(
+          this.vscodeApi.window.createOutputChannel('EasySSH MCP Audit'),
+        );
+        const rows = await this.mcpAudit.page(Number(rawOffset), 500);
+        output.clear();
+        output.appendLine(JSON.stringify(rows, null, 2));
+        output.show(true);
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.exportMcpAudit',
+      execute: async () => {
+        if (!this.mcpAudit)
+          throw new EasySshError('UNSUPPORTED', 'Configure MCP before exporting its audit log.');
+        const target = await this.vscodeApi.window.showSaveDialog({
+          defaultUri: this.vscodeApi.Uri.file('easyssh-mcp-audit.json'),
+          filters: { JSON: ['json'] },
+        });
+        if (!target) return;
+        const rows = [];
+        for (let offset = 0; ; offset += 500) {
+          const page = await this.mcpAudit.page(offset, 500);
+          rows.push(...page);
+          if (page.length < 500) break;
+        }
+        await this.vscodeApi.workspace.fs.writeFile(
+          target,
+          Buffer.from(JSON.stringify(rows, null, 2), 'utf8'),
+        );
+      },
+    });
+    this.commands.register({
+      id: 'easysshManager.clearMcpAudit',
+      execute: async () => {
+        if (!this.mcpAudit)
+          throw new EasySshError('UNSUPPORTED', 'Configure MCP before clearing its audit log.');
+        const choice = await this.vscodeApi.window.showWarningMessage(
+          'Clear the EasySSH MCP metadata audit log?',
+          { modal: true },
+          'Clear Audit',
+        );
+        if (choice === 'Clear Audit') await this.mcpAudit.clear();
+      },
+    });
     await this.connections.retryCredentialCleanup();
     await this.connections.reconcileCredentialHints();
     this.logger.info('EasySSH Manager activated', { operation: 'activation' });
   }
 
   async dispose(): Promise<void> {
+    this.mcpService?.revokeAll();
+    await this.mcpBridge?.dispose();
+    this.mcpBridge = undefined;
+    await this.mcpAudit?.close();
+    this.mcpAudit = undefined;
+    this.mcpService = undefined;
     await this.disposables.dispose();
+  }
+
+  private async configureMcp(): Promise<void> {
+    const context = this.context;
+    const companionPath = join(context.extensionPath, 'dist', 'mcp', 'companion.js');
+    try {
+      await this.vscodeApi.workspace.fs.stat(this.vscodeApi.Uri.file(companionPath));
+    } catch {
+      throw new EasySshError(
+        'UNSUPPORTED',
+        'The packaged MCP companion is missing. Reinstall EasySSH Manager.',
+      );
+    }
+    const nodeInput = await this.vscodeApi.window.showInputBox({
+      prompt: `Path to Node.js (MCP companion requires ${MCP_COMPANION_NODE_RANGE})`,
+      value: 'node',
+      ignoreFocusOut: true,
+    });
+    if (!nodeInput) return;
+    let node: string;
+    try {
+      node = await resolveExecutablePath(nodeInput);
+    } catch {
+      throw new EasySshError('UNSUPPORTED', 'Could not find a runnable Node.js executable.');
+    }
+    let version: string;
+    try {
+      const result = await promisify(execFile)(node, ['--version'], {
+        timeout: 5000,
+        windowsHide: true,
+      });
+      version = result.stdout.trim().replace(/^v/, '');
+    } catch {
+      throw new EasySshError('UNSUPPORTED', 'Could not run the selected Node.js executable.');
+    }
+    if (!supportedCompanionNode(version))
+      throw new EasySshError(
+        'UNSUPPORTED',
+        `Unsupported Node.js version. EasySSH MCP requires ${MCP_COMPANION_NODE_RANGE}.`,
+      );
+    const selfTest = await promisify(execFile)(node, [companionPath, '--self-test'], {
+      timeout: 5000,
+      windowsHide: true,
+    });
+    if (selfTest.stdout !== 'EasySSH MCP companion ready.\n' || selfTest.stderr)
+      throw new EasySshError('UNSUPPORTED', 'The MCP companion self-test failed.');
+    const enable = await this.vscodeApi.window.showWarningMessage(
+      'Enable EasySSH Manager’s local MCP bridge for this VSCodium session? It exposes only connections with agent access explicitly enabled.',
+      { modal: true },
+      'Enable Bridge',
+      'Cancel',
+    );
+    if (enable !== 'Enable Bridge') return;
+    await this.mcpBridge?.dispose();
+    await this.mcpAudit?.close();
+    this.mcpBridge = undefined;
+    this.mcpService = undefined;
+    const audit = new McpAuditLog(join(context.globalStorageUri.fsPath, 'mcp-audit.jsonl'));
+    this.mcpAudit = audit;
+    const service = new McpAgentService(
+      this.state,
+      this.sshSessions,
+      this.sftpPool,
+      this.vscodeApi.window,
+      audit,
+      this.sftpCache,
+    );
+    this.mcpService = service;
+    const bridge = new McpBridge(context.globalStorageUri.fsPath, (method, params, signal) =>
+      service.dispatch(method, params, signal),
+    );
+    try {
+      await bridge.start();
+    } catch (error) {
+      this.mcpService = undefined;
+      await audit.close();
+      this.mcpAudit = undefined;
+      throw error;
+    }
+    this.mcpBridge = bridge;
+    const configuration = JSON.stringify(
+      createMcpClientConfig(node, companionPath, bridge.discoveryPath),
+      null,
+      2,
+    );
+    const action = await this.vscodeApi.window.showInformationMessage(
+      'The MCP bridge is enabled for this session. Copy a generic launch configuration or save it to a file; no client configuration is edited.',
+      'Copy Configuration',
+      'Save Configuration',
+    );
+    if (action === 'Copy Configuration')
+      await this.vscodeApi.env.clipboard.writeText(configuration);
+    if (action === 'Save Configuration') {
+      const target = await this.vscodeApi.window.showSaveDialog({
+        defaultUri: this.vscodeApi.Uri.file('easyssh-mcp-config.json'),
+        filters: { JSON: ['json'] },
+      });
+      if (target)
+        await this.vscodeApi.workspace.fs.writeFile(target, Buffer.from(configuration, 'utf8'));
+    }
   }
 
   private setFolderExpanded(id: string, expanded: boolean): void {

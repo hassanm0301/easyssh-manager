@@ -8,9 +8,8 @@ machine, including when a remote workspace is open.
 
 ## Implemented features
 
-The current release provides local connection management and secure SSH
-terminals. SFTP is used by **Test Connection** to validate the configured
-remote path; browsing and editing arrive in a later milestone.
+The current release provides local connection management, secure SSH
+terminals, and SFTP browsing, editing, and transfers.
 
 - Native **EasySSH Manager** Activity Bar container with an ordered, nested,
   drag-and-drop **Connections** TreeView and complete connection/folder menus.
@@ -19,7 +18,7 @@ remote path; browsing and editing arrive in a later milestone.
 - Passwords and key passphrases stored only through VS Code SecretStorage, with
   explicit keep, replace, clear, duplicate, and recursive-delete behavior.
 - CSP- and nonce-protected connection editor with strict host-side request
-  validation and agent-access policy controls.
+  validation and independent MCP read, write, and exec policy controls.
 - Read-only OpenSSH config discovery and preview with guarded includes,
   wildcard/default inheritance, safe token expansion, warnings, duplicate
   handling, and per-profile import choices.
@@ -55,8 +54,23 @@ remote path; browsing and editing arrive in a later milestone.
 
 ## Current scope
 
-MCP access is planned for a later milestone. The extension includes no
-telemetry or background service and never consults or writes OpenSSH
+MCP support is enabled explicitly with **EasySSH Manager: Configure MCP**.
+The extension bundles a separate Node.js stdio companion and exposes a
+session-scoped Unix-domain IPC bridge only after confirmation. The companion
+has no SSH, SFTP, credential, host-trust, or policy authority; all calls are
+validated and authorized again in the extension host. Connections remain
+hidden from MCP until agent access is enabled for them. File access requires
+allowed remote roots. Exec and file mutations follow each connection's
+confirmation mode. The extension never edits MCP client configuration files;
+the command offers a generic launch configuration to copy or save.
+
+The bridge runs only while VSCodium is open. It uses private filesystem
+permissions and a fresh activation token. A compromise of the same local user
+is outside the enforceable boundary; the controls protect against accidental
+and cross-user access. Interactive shell/terminal attachment, TCP/HTTP or
+remote MCP, and background daemons are not supported. **View MCP Audit**,
+**Export MCP Audit**, and **Clear MCP Audit** manage the metadata-only audit.
+The extension includes no telemetry and never consults or writes OpenSSH
 `known_hosts`.
 
 ## License

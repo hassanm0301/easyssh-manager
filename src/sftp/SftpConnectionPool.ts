@@ -351,6 +351,17 @@ class LeasedSftpClient implements SftpClient {
   readDirectory(path: string): Promise<RemoteDirectoryEntry[]> {
     return this.execute(() => this.client.readDirectory(path));
   }
+  readDirectoryBounded(
+    path: string,
+    limit: number,
+  ): Promise<{ entries: RemoteDirectoryEntry[]; truncated: boolean }> {
+    if (!this.client.readDirectoryBounded) {
+      return Promise.reject(
+        new EasySshError('UNSUPPORTED', 'Bounded directory listing is unavailable.'),
+      );
+    }
+    return this.execute(() => this.client.readDirectoryBounded!(path, limit));
+  }
   readFile(path: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
     return this.execute(() => this.client.readFile(path, range));
   }

@@ -2,7 +2,7 @@
   "name": "easyssh-manager",
   "displayName": "EasySSH Manager",
   "description": "Manage SSH and SFTP connections from the local desktop extension host.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hassanm0301",
   "license": "GPL-3.0-only",
   "repository": {
@@ -51,6 +51,10 @@
     "onCommand:easysshManager.testConnection",
     "onCommand:easysshManager.refreshConnections",
     "onCommand:easysshManager.openSettings",
+    "onCommand:easysshManager.configureMcp",
+    "onCommand:easysshManager.viewMcpAudit",
+    "onCommand:easysshManager.exportMcpAudit",
+    "onCommand:easysshManager.clearMcpAudit",
     "onCommand:easysshManager.collapseAllConnections",
     "onFileSystem:remote-sftp"
   ],
@@ -168,6 +172,22 @@
         "command": "easysshManager.openSettings",
         "title": "EasySSH Manager: Open Settings",
         "icon": "$(gear)"
+      },
+      {
+        "command": "easysshManager.configureMcp",
+        "title": "EasySSH Manager: Configure MCP"
+      },
+      {
+        "command": "easysshManager.viewMcpAudit",
+        "title": "EasySSH Manager: View MCP Audit"
+      },
+      {
+        "command": "easysshManager.exportMcpAudit",
+        "title": "EasySSH Manager: Export MCP Audit"
+      },
+      {
+        "command": "easysshManager.clearMcpAudit",
+        "title": "EasySSH Manager: Clear MCP Audit"
       }
     ],
     "menus": {
@@ -374,7 +394,7 @@
     "package": "npm run build:production && npm run prepare:artifacts && vsce package --no-dependencies --out artifacts/easyssh-manager.vsix && npm run inspect:vsix -- artifacts/easyssh-manager.vsix",
     "inspect:vsix": "node scripts/inspect-vsix.mjs",
     "check:mcp-companion": "node scripts/check-mcp-companion.mjs",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm run test:integration && npm run build:production"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm run test:integration && npm run build:production && npm run check:mcp-companion"
   },
   "devDependencies": {
     "@types/mocha": "10.0.10",

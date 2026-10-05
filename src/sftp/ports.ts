@@ -77,6 +77,14 @@ export interface SftpClient {
   realpath(path: string): Promise<string>;
   readlink(path: string): Promise<string>;
   readDirectory(path: string): Promise<RemoteDirectoryEntry[]>;
+  /** Reads at most limit entries while consuming the remote directory handle. */
+  readDirectoryBounded?(
+    path: string,
+    limit: number,
+  ): Promise<{
+    entries: RemoteDirectoryEntry[];
+    truncated: boolean;
+  }>;
   readFile(path: string, range?: { offset: number; length: number }): Promise<Uint8Array>;
   writeFile(path: string, data: Uint8Array, options: RemoteWriteOptions): Promise<void>;
   /**

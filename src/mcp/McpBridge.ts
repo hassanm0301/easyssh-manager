@@ -11,7 +11,8 @@ import {
   unlink,
 } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createConnection } from 'node:net';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { McpIpcServer, type IpcDispatch } from './IpcServer';
 import { IPC_PROTOCOL_VERSION } from './ipcProtocol';
@@ -50,11 +51,15 @@ export class McpBridge {
     this.disposed = false;
     const uid = currentUid();
     await ensurePrivateStorage(this.globalStoragePath, uid);
+    await clearStaleActivation(this.discoveryPath, uid);
     const runtimeDirectory = await createRuntimeDirectory(uid);
     this.runtimeDirectory = runtimeDirectory;
     const instanceId = randomUUID();
     const generation = randomUUID();
-    const socketPath = join(runtimeDirectory, `mcp-${generation.slice(0, 8)}.sock`);
+    const socketPath = join(
+      runtimeDirectory,
+      `mcp-${generation.replace(/-/g, '').slice(0, 16)}.sock`,
+    );
     if (Buffer.byteLength(socketPath) > SOCKET_PATH_MAX)
       throw new Error('A safe short MCP socket path is unavailable.');
     const token = randomBytes(32).toString('hex');
@@ -122,6 +127,88 @@ async function ensurePrivateStorage(path: string, uid: number): Promise<void> {
     throw new Error('Extension global storage permissions are unsafe.');
 }
 
+async function clearStaleActivation(path: string, uid: number): Promise<void> {
+  const info = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (!info) return;
+  if (
+    !info.isFile() ||
+    info.isSymbolicLink() ||
+    info.uid !== uid ||
+    (info.mode & 0o777) !== 0o600 ||
+    info.size > 4096
+  )
+    throw new Error('Existing MCP discovery state is unsafe.');
+
+  let old: DiscoveryFile | undefined;
+  try {
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+    if (isActivationDiscovery(value, uid)) old = value;
+  } catch {
+    /* A private but malformed stale file can be discarded; it grants no authority. */
+  }
+  if (old && (await socketIsActive(old.socketPath)))
+    throw new Error('Another EasySSH MCP bridge is already active for this user.');
+
+  await unlink(path);
+  if (!old) return;
+  await removeSocket(old.socketPath, uid);
+  await removeRuntimeDirectory(dirname(old.socketPath));
+  old.token = '';
+}
+
+function isActivationDiscovery(value: unknown, uid: number): value is DiscoveryFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join(',') !==
+      'createdAt,expiresAt,instanceId,protocolVersion,socketPath,token' ||
+    record.protocolVersion !== IPC_PROTOCOL_VERSION ||
+    typeof record.instanceId !== 'string' ||
+    typeof record.token !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(record.token) ||
+    typeof record.socketPath !== 'string' ||
+    typeof record.createdAt !== 'number' ||
+    typeof record.expiresAt !== 'number' ||
+    !Number.isFinite(record.createdAt) ||
+    !Number.isFinite(record.expiresAt) ||
+    Buffer.byteLength(record.socketPath) > SOCKET_PATH_MAX
+  )
+    return false;
+  const directory = dirname(record.socketPath);
+  const runtimeName = `easyssh-mcp-${uid}-`;
+  return (
+    basename(directory).startsWith(runtimeName) &&
+    /^mcp-[0-9a-f]{16}\.sock$/.test(basename(record.socketPath))
+  );
+}
+
+function socketIsActive(path: string): Promise<boolean> {
+  return new Promise((resolvePromise, reject) => {
+    const socket = createConnection(path);
+    let settled = false;
+    const finish = (active: boolean, error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolvePromise(active);
+    };
+    const timer = setTimeout(
+      () => finish(false, new Error('Could not safely check existing MCP socket state.')),
+      1000,
+    );
+    socket.once('connect', () => finish(true));
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      if (['ECONNREFUSED', 'ENOENT', 'ENOTSOCK'].includes(error.code ?? '')) finish(false);
+      else finish(false, error);
+    });
+  });
+}
+
 async function createRuntimeDirectory(uid: number): Promise<string> {
   const xdg = process.env.XDG_RUNTIME_DIR;
   let parent: string;
@@ -162,7 +249,8 @@ async function createRuntimeDirectory(uid: number): Promise<string> {
         await rmdir(child).catch(() => undefined);
         continue;
       }
-      if (Buffer.byteLength(join(child, 'mcp-12345678.sock')) <= SOCKET_PATH_MAX) return child;
+      if (Buffer.byteLength(join(child, 'mcp-1234567890abcdef.sock')) <= SOCKET_PATH_MAX)
+        return child;
       await rmdir(child).catch(() => undefined);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;

@@ -44,6 +44,7 @@ describe('MCP IPC framing and contracts', () => {
     };
     expect(validateIpcRequest(request)).toEqual(request);
     expect(() => validateIpcRequest({ ...request, secret: true })).toThrow('invalid');
+    expect(() => validateIpcRequest({ ...request, method: 'unknown_method' })).toThrow('invalid');
     expect(() =>
       validateIpcRequest({ ...request, params: JSON.parse('{"__proto__":{"x":1}}') }),
     ).toThrow('invalid');

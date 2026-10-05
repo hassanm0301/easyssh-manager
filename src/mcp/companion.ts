@@ -56,6 +56,7 @@ export class McpIpcCompanionClient {
     method: IpcMethod,
     params: Record<string, unknown>,
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<unknown> {
     if (this.active >= IPC_MAX_CONCURRENT_REQUESTS)
       throw new Error('RATE_LIMITED: Too many active requests.');
@@ -63,7 +64,7 @@ export class McpIpcCompanionClient {
     try {
       if (signal?.aborted) throw new Error('CANCELLED: Request cancelled.');
       const discovery = await readDiscovery(this.discoveryPath);
-      return await this.exchange(discovery, method, params, signal);
+      return await this.exchange(discovery, method, params, signal, requestId);
     } finally {
       this.active -= 1;
     }
@@ -79,9 +80,11 @@ export class McpIpcCompanionClient {
     method: IpcMethod,
     params: Record<string, unknown>,
     signal?: AbortSignal,
+    suppliedRequestId?: string,
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      const requestId = randomUUID();
+      const requestId =
+        suppliedRequestId && suppliedRequestId.length <= 128 ? suppliedRequestId : randomUUID();
       const socket = createConnection(discovery.socketPath);
       this.sockets.add(socket);
       const decoder = new IpcFrameDecoder();
@@ -104,6 +107,9 @@ export class McpIpcCompanionClient {
       signal?.addEventListener('abort', onAbort, { once: true });
       socket.setNoDelay(true);
       socket.once('connect', () => {
+        // The five-second unavailable-editor bound applies only to connection setup. Once
+        // connected, service operations have their own method-specific deadlines (up to 5 min).
+        clearTimeout(timer);
         if (signal?.aborted) return onAbort();
         try {
           socket.write(
@@ -192,13 +198,29 @@ export async function runCompanion(args: readonly string[]): Promise<void> {
     },
   );
 
+  registerShutdownHandlers(client, handle, (code) => process.exit(code));
+}
+
+export function registerShutdownHandlers(
+  client: { close(): void },
+  handle: { close(): Promise<void> },
+  exit: (code: number) => void,
+  signals: Pick<NodeJS.Process, 'once' | 'removeListener'> = process,
+  stdin: Pick<NodeJS.ReadStream, 'once' | 'removeListener'> = process.stdin,
+): void {
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     client.close();
-    void handle.close().finally(() => process.exit(0));
+    void handle.close().then(
+      () => exit(0),
+      () => exit(1),
+    );
   };
-  process.once('SIGINT', shutdown);
-  process.once('SIGTERM', shutdown);
-  process.stdin.once('close', shutdown);
+  signals.once('SIGINT', shutdown);
+  signals.once('SIGTERM', shutdown);
+  stdin.once('close', shutdown);
 }
 
 function registerTool(
@@ -210,10 +232,18 @@ function registerTool(
   server.registerTool(
     name,
     { title: name, description: toolDescription(name), inputSchema: schema as never } as never,
-    (async (input: unknown): Promise<CallToolResult> => {
+    (async (
+      input: unknown,
+      context: { mcpReq: { id: string | number; signal: AbortSignal } },
+    ): Promise<CallToolResult> => {
       try {
         const validated = schema.parse(input);
-        const result = await client.call(name as IpcMethod, validated as Record<string, unknown>);
+        const result = await client.call(
+          name as IpcMethod,
+          validated as Record<string, unknown>,
+          context.mcpReq.signal,
+          String(context.mcpReq.id),
+        );
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (error) {
         const message = error instanceof Error ? error.message : '';

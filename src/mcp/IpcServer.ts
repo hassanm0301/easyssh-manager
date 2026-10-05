@@ -23,6 +23,7 @@ export interface IpcDispatch {
     method: Exclude<IpcMethod, 'cancel'>,
     params: Record<string, unknown>,
     signal: AbortSignal,
+    requestId: string,
   ): Promise<unknown>;
 }
 
@@ -50,6 +51,7 @@ const ERRORS: Record<string, { code: string; message: string; retryable: boolean
     retryable: false,
   },
   INVALID_INPUT: { code: 'INVALID_INPUT', message: 'The request is invalid.', retryable: false },
+  NOT_FOUND: { code: 'NOT_FOUND', message: 'The remote resource was not found.', retryable: false },
   OUTPUT_LIMIT: {
     code: 'OUTPUT_LIMIT',
     message: 'The operation exceeded its output limit.',
@@ -83,7 +85,9 @@ const ERRORS: Record<string, { code: string; message: string; retryable: boolean
 export class McpIpcServer {
   private server: Server | undefined;
   private readonly sockets = new Set<Socket>();
+  private readonly pending = new Set<Promise<void>>();
   private accepting = false;
+  private activeRequestCount = 0;
 
   constructor(
     private readonly identity: IpcServerIdentity,
@@ -132,6 +136,7 @@ export class McpIpcServer {
     this.server = undefined;
     for (const socket of this.sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await Promise.allSettled([...this.pending]);
   }
 
   private accept(socket: Socket): void {
@@ -175,19 +180,30 @@ export class McpIpcServer {
             this.respond(socket, request.requestId, true, { cancelled: controller !== undefined });
             continue;
           }
-          if (active.size >= IPC_MAX_CONCURRENT_REQUESTS) {
+          if (this.activeRequestCount >= IPC_MAX_CONCURRENT_REQUESTS) {
             this.respond(socket, request.requestId, false, undefined, ERRORS.RATE_LIMITED);
             continue;
           }
           const controller = new AbortController();
           active.set(request.requestId, controller);
-          void this.dispatch(request.method, request.params, controller.signal)
+          this.activeRequestCount += 1;
+          const pending = this.dispatch(
+            request.method,
+            request.params,
+            controller.signal,
+            request.requestId,
+          )
             .then(
               (result) => this.respond(socket, request.requestId, true, result),
               (error: unknown) =>
                 this.respond(socket, request.requestId, false, undefined, stableError(error)),
             )
-            .finally(() => active.delete(request.requestId));
+            .finally(() => {
+              active.delete(request.requestId);
+              this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+            });
+          this.pending.add(pending);
+          void pending.finally(() => this.pending.delete(pending));
         }
       } catch {
         socket.destroy();
@@ -226,9 +242,43 @@ export class McpIpcServer {
 }
 
 function stableError(error: unknown): { code: string; message: string; retryable: boolean } {
+  if (error instanceof Error && error.name === 'ZodError') return ERRORS.INVALID_INPUT!;
   if (error && typeof error === 'object' && 'code' in error) {
-    const mapped = ERRORS[String(error.code)];
-    if (mapped) return mapped;
+    const code = String(error.code);
+    if (code === 'VALIDATION') return ERRORS.INVALID_INPUT!;
+    if (
+      [
+        'NETWORK',
+        'CONNECTION_LOST',
+        'AUTHENTICATION',
+        'HOST_KEY_REJECTED',
+        'HOST_KEY_MISMATCH',
+        'CHANNEL_REJECTED',
+      ].includes(code)
+    )
+      return ERRORS.CONNECTION_FAILED!;
+    if (code === 'PERMISSION_DENIED') return ERRORS.ACCESS_DENIED!;
+    const mapped = ERRORS[code];
+    if (mapped) {
+      if (String(error.code) === 'OUTPUT_LIMIT' && 'observedOutput' in error) {
+        const counts = error.observedOutput;
+        if (
+          counts &&
+          typeof counts === 'object' &&
+          'stdout' in counts &&
+          'stderr' in counts &&
+          Number.isSafeInteger(counts.stdout) &&
+          Number.isSafeInteger(counts.stderr) &&
+          Number(counts.stdout) >= 0 &&
+          Number(counts.stderr) >= 0
+        )
+          return {
+            ...mapped,
+            message: `Output limit exceeded (stdout ${counts.stdout} bytes, stderr ${counts.stderr} bytes).`,
+          };
+      }
+      return mapped;
+    }
   }
   return ERRORS.UNAVAILABLE!;
 }
