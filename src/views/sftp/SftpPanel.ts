@@ -239,7 +239,6 @@ class SftpPanel implements vscode.Disposable {
       historyBack: [],
       historyForward: [],
       sort: { key: 'name', direction: 'asc' },
-      layout: defaultSftpLayoutState(),
       generation: workspace.generation,
       state: workspace.state,
       ...(workspace.message ? { message: workspace.message } : {}),
@@ -251,6 +250,7 @@ class SftpPanel implements vscode.Disposable {
       historyBack: [],
       historyForward: [],
       sort: { key: 'name', direction: 'asc' },
+      layout: defaultSftpLayoutState(),
     };
     this.panel.title = `SFTP: ${connection.name}`;
     const nonce = randomBytes(18).toString('base64');
@@ -323,6 +323,10 @@ class SftpPanel implements vscode.Disposable {
 
   private async dispatch(request: SftpRequest): Promise<unknown> {
     switch (request.type) {
+      case 'ready':
+        this.persistState();
+        this.render();
+        return undefined;
       case 'list':
         if (this.connectionState === 'disconnected' || this.connectionState === 'error') {
           await this.dependencies.pool.invalidate(this.connection.id, 'user requested reconnect');

@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { RemoteResourceCache } from '../../sftp/RemoteResourceCache';
 import { SftpBrowserService, sortEntries } from '../../sftp/SftpBrowserService';
 import type { SftpClient, SftpConnectionPool } from '../../sftp/ports';
-import { validateSftpPanelState, validateSftpRequest } from '../../sftp/browser/contracts';
+import {
+  defaultSftpLayoutState,
+  SFTP_PANEL_STATE_VERSION,
+  validateSftpPanelState,
+  validateSftpRequest,
+} from '../../sftp/browser/contracts';
 import { sftpPanelHtml } from '../../views/sftp/SftpPanel';
 
 const CONNECTION_ID = '11111111-1111-4111-8111-111111111111';
@@ -91,12 +96,13 @@ describe('SFTP browser protocol boundary', () => {
       sort: { key: 'mtime', direction: 'desc' },
     });
     expect(restored).toEqual({
-      version: 1,
+      version: SFTP_PANEL_STATE_VERSION,
       connectionId: CONNECTION_ID,
       currentPath: '/safe',
       historyBack: ['/', '/one'],
       historyForward: ['/next'],
       sort: { key: 'mtime', direction: 'desc' },
+      layout: defaultSftpLayoutState(),
     });
     expect(() => validateSftpPanelState({ ...restored, password: 'secret' })).toThrow(
       'Invalid saved SFTP panel state',

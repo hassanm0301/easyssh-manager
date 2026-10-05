@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { SftpPanelManager } from '../../views/sftp/SftpPanel';
+import { defaultSftpLayoutState, validateSftpPanelState } from '../../sftp/browser/contracts';
 
 const CONNECTION_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -111,6 +112,34 @@ function harness(found = connection()) {
 }
 
 describe('SFTP panel manager lifecycle', () => {
+  it('sends valid layout state to newly opened and recreated webviews', async () => {
+    const { manager, created, browser } = harness();
+    await manager.open(CONNECTION_ID);
+    const current = created[0];
+    if (!current) throw new Error('Panel was not created.');
+    const receive = current.receive();
+    if (!receive) throw new Error('Panel did not register its message listener.');
+    await receive({ requestId: 'ready', type: 'ready' });
+    expect(current.value.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'render',
+        value: expect.objectContaining({ layout: defaultSftpLayoutState() }),
+      }),
+    );
+    const layout = { ...defaultSftpLayoutState(), paneRatio: 0.6 };
+    await receive({ requestId: 'resize', type: 'setLayout', layout });
+    current.value.webview.postMessage.mockClear();
+    await receive({ requestId: 'reopened', type: 'ready' });
+    const messages = current.value.webview.postMessage.mock.calls.map(
+      ([message]) => message as { type: string; value: unknown },
+    );
+    const saved = messages.find((message) => message.type === 'persist');
+    expect(validateSftpPanelState(saved?.value).layout).toEqual(layout);
+    expect(messages.find((message) => message.type === 'render')?.value).toMatchObject({ layout });
+    expect(browser.list).toHaveBeenCalledOnce();
+    manager.dispose();
+  });
+
   it('creates only one panel per host-resolved connection and updates its title', async () => {
     const { manager, api, created } = harness();
     await manager.open(CONNECTION_ID);

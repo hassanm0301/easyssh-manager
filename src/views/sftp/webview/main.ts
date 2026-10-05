@@ -389,14 +389,19 @@ function appendExpanded(
 
 function installActivation(row: HTMLElement, pane: Pane, key: string, kind: Entry['kind']): void {
   row.addEventListener('click', (event) => {
-    if ((event.target as HTMLElement).closest('.entry-children')) return;
+    if ((event.target as HTMLElement).closest('.entry') !== row) return;
     choose(pane, key, event.ctrlKey || event.metaKey);
   });
   row.addEventListener('dblclick', (event) => {
-    if ((event.target as HTMLElement).closest('.entry-toggle,.entry-children')) return;
+    if (
+      (event.target as HTMLElement).closest('.entry') !== row ||
+      (event.target as HTMLElement).closest('.entry-toggle')
+    )
+      return;
     openEntry(pane, key);
   });
   row.addEventListener('contextmenu', (event) => {
+    if ((event.target as HTMLElement).closest('.entry') !== row) return;
     event.preventDefault();
     event.stopPropagation();
     choose(pane, key, false);
@@ -406,6 +411,7 @@ function installActivation(row: HTMLElement, pane: Pane, key: string, kind: Entr
 }
 
 function rowKeydown(event: KeyboardEvent, pane: Pane, key: string, kind: Entry['kind']): void {
+  if ((event.target as HTMLElement).closest('.entry') !== event.currentTarget) return;
   if (event.key === 'Enter') openEntry(pane, key);
   else if (event.key === ' ') choose(pane, key, event.ctrlKey || event.metaKey);
   else if (event.key === 'ArrowRight' && kind === 'directory') ensureExpanded(pane, key, true);
@@ -429,6 +435,7 @@ function rowKeydown(event: KeyboardEvent, pane: Pane, key: string, kind: Entry['
     showMenu(event.currentTarget as HTMLElement, pane);
   else return;
   event.preventDefault();
+  event.stopPropagation();
 }
 
 function toggleExpansion(pane: Pane, key: string): void {
@@ -458,7 +465,15 @@ function choose(pane: Pane, key: string, additive: boolean): void {
   else selected.add(key);
   if (pane === 'remote') activeRemoteKey = key;
   else activeWorkspaceKey = key;
-  if (view) render(view, remoteBusy ? 1 : 0);
+  // Keep the clicked row attached so the browser can complete a double-click or drag.
+  const rows = pane === 'remote' ? remoteRows : workspaceRows;
+  for (const row of Array.from(rows.querySelectorAll<HTMLElement>('.entry'))) {
+    const rowKey = pane === 'remote' ? row.dataset.path : row.dataset.uri;
+    row.ariaSelected = String(rowKey !== undefined && selected.has(rowKey));
+    row.tabIndex = rowKey === key ? 0 : -1;
+    if (rowKey === key) row.focus();
+  }
+  if (view && pane === 'remote') renderRemoteControls(view);
 }
 
 function openEntry(pane: Pane, key: string): void {
@@ -759,8 +774,7 @@ function applyLayout(): void {
   paneResizer.setAttribute('aria-valuenow', String(Math.round(layout.paneRatio * 100)));
   for (const pane of ['workspace', 'remote'] as const) {
     const list = pane === 'workspace' ? workspaceList : remoteList;
-    const widths =
-      pane === 'workspace' ? layout.workspaceColumnWidths : layout.remoteColumnWidths;
+    const widths = pane === 'workspace' ? layout.workspaceColumnWidths : layout.remoteColumnWidths;
     list.style.setProperty('--column-template', columnTemplate(layout.visibleColumns, widths));
   }
   const visible = new Set(layout.visibleColumns);
@@ -801,7 +815,7 @@ function setupPaneResize(): void {
   let startRatio = 0;
   let availableWidth = 1;
   paneResizer.addEventListener('pointerdown', (event) => {
-    if (!layout || !browserLayout || window.matchMedia('(max-width: 70rem)').matches) return;
+    if (!layout || !browserLayout || window.matchMedia('(max-width: 44rem)').matches) return;
     startX = event.clientX;
     startRatio = layout.paneRatio;
     availableWidth = Math.max(1, browserLayout.getBoundingClientRect().width);
@@ -883,7 +897,8 @@ function setupColumnResize(): void {
       const current = widths();
       if (!current) return;
       const increment = event.shiftKey ? 50 : 10;
-      if (event.key === 'ArrowLeft') current[column] = clampColumnWidth(current[column] - increment);
+      if (event.key === 'ArrowLeft')
+        current[column] = clampColumnWidth(current[column] - increment);
       else if (event.key === 'ArrowRight')
         current[column] = clampColumnWidth(current[column] + increment);
       else if (event.key === 'Home') current[column] = defaults[column];
@@ -1139,6 +1154,9 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
   }
   if (typed.type === 'response') renderResponse(message as SftpResponseMessage);
 });
+
+// The webview is recreated when a hidden panel becomes visible again.
+command('ready');
 
 function isView(value: unknown): value is View {
   return (

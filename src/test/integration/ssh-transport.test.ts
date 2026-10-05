@@ -347,7 +347,7 @@ docker('Docker SSH transport', () => {
     } finally {
       await verifier.close();
     }
-  });
+  }, 15_000);
 
   it('reuses matching trust, blocks host-key rotation, and permits explicit replacement', async () => {
     state.value.hostKeys = [];
@@ -697,7 +697,8 @@ function collectUntil(
     );
     stream.on('data', (chunk: Buffer | string) => {
       output += chunk.toString();
-      if (output.includes(marker)) {
+      // PTYs echo the submitted command before running it; wait for the output line.
+      if (output.split(/\r?\n/).some((line) => line.trim() === marker)) {
         clearTimeout(timeout);
         resolve(output);
       }

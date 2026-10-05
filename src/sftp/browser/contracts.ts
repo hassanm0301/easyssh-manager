@@ -56,6 +56,7 @@ export interface RemoteEntryView {
 }
 
 export type SftpRequest =
+  | { readonly requestId: string; readonly type: 'ready' }
   | {
       readonly requestId: string;
       readonly type: 'list';
@@ -252,6 +253,7 @@ export function validateSftpRequest(value: unknown): SftpRequest {
         type: value.type,
         targetPath: requestPath(value.targetPath),
       };
+    case 'ready':
     case 'back':
     case 'forward':
     case 'up':
@@ -275,7 +277,11 @@ export function validateSftpRequest(value: unknown): SftpRequest {
       };
     case 'setLayout':
       exactKeys(value, ['requestId', 'type', 'layout']);
-      return { requestId: value.requestId, type: 'setLayout', layout: validateLayout(value.layout) };
+      return {
+        requestId: value.requestId,
+        type: 'setLayout',
+        layout: validateLayout(value.layout),
+      };
     default:
       invalidRequest();
   }
@@ -385,7 +391,13 @@ function validateColumnWidths(value: unknown): SftpColumnWidths {
 }
 
 function isColumnKey(value: unknown): value is SftpColumnKey {
-  return value === 'name' || value === 'type' || value === 'size' || value === 'mtime' || value === 'path';
+  return (
+    value === 'name' ||
+    value === 'type' ||
+    value === 'size' ||
+    value === 'mtime' ||
+    value === 'path'
+  );
 }
 
 export function validateChildName(value: unknown): string {
