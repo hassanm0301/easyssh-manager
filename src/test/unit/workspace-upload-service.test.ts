@@ -291,7 +291,7 @@ describe('workspace pane authorization', () => {
     }
   });
 
-  it('navigates to provider parents and resolves typed sibling paths without widening schemes', async () => {
+  it('navigates up from Workspace and resolves typed sibling paths without widening schemes', async () => {
     const workspace = new MemoryWorkspace();
     workspace.putDirectory('/', [
       ['workspace', workspace.FileType.Directory],
@@ -302,8 +302,9 @@ describe('workspace pane authorization', () => {
     workspace.putDirectory('/sibling/nested');
     const pane = new WorkspacePaneService(workspace.host() as never);
     const root = pane.initialize().roots[0]!;
-    const parent = await pane.parent(root.uri);
+    const parent = await pane.parentOfWorkspace();
     expect(parent).toBe('mem:///');
+    expect(await pane.parent(root.uri)).toBe(parent);
     const parentEntries = await pane.readChildren(parent);
     expect(parentEntries.map((entry) => entry.name)).toEqual(['sibling', 'workspace']);
     const siblingEntry = parentEntries.find((entry) => entry.name === 'sibling')!;
@@ -319,6 +320,33 @@ describe('workspace pane authorization', () => {
     await expect(pane.resolveTypedDirectory('other://host/path', sibling)).rejects.toThrow(
       'unavailable filesystem provider',
     );
+  });
+
+  it('uses a common parent for multiple workspace folders on the same provider', async () => {
+    const workspace = new MemoryWorkspace();
+    workspace.roots = [
+      { name: 'first', uri: uri('/projects/first') },
+      { name: 'second', uri: uri('/projects/second') },
+    ];
+    workspace.putDirectory('/projects');
+    const pane = new WorkspacePaneService(workspace.host() as never);
+    pane.initialize();
+    expect(await pane.parentOfWorkspace()).toBe('mem:///projects');
+    workspace.roots[1] = { name: 'other', uri: uri('/projects/other', 'other') };
+    expect(pane.workspaceParent()).toBeUndefined();
+  });
+
+  it('disables Workspace up when there is no parent or workspace trust', async () => {
+    const workspace = new MemoryWorkspace();
+    workspace.roots = [{ name: 'root', uri: uri('/') }];
+    const pane = new WorkspacePaneService(workspace.host() as never);
+    expect(pane.workspaceParent()).toBeUndefined();
+    expect(await pane.parentOfWorkspace()).toBeUndefined();
+    workspace.roots = [];
+    expect(pane.workspaceParent()).toBeUndefined();
+    workspace.trusted = false;
+    expect(pane.workspaceParent()).toBeUndefined();
+    await expect(pane.parentOfWorkspace()).rejects.toMatchObject({ code: 'WORKSPACE_UNTRUSTED' });
   });
 });
 

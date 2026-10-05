@@ -522,8 +522,10 @@ class SftpPanel implements vscode.Disposable {
         return target ? this.loadWorkspace(target, false, 'forward') : this.workspaceView();
       }
       case 'workspaceUp': {
-        if (this.workspaceState.location === 'workspace') return this.workspaceView();
-        const parent = await this.workspace.parent(this.workspaceState.location);
+        const parent =
+          this.workspaceState.location === 'workspace'
+            ? await this.workspace.parentOfWorkspace()
+            : await this.workspace.parent(this.workspaceState.location);
         return parent ? this.loadWorkspace(parent, false, true) : this.workspaceView();
       }
       case 'workspaceSetSort':
@@ -727,7 +729,8 @@ class SftpPanel implements vscode.Disposable {
 
   private workspaceView(): WorkspaceBrowserView {
     let path = 'Workspace';
-    let canGoUp = false;
+    let canGoUp =
+      this.workspaceState.state === 'ready' && this.workspace.workspaceParent() !== undefined;
     if (this.workspaceState.location !== 'workspace') {
       path = this.workspace.displayPath(this.workspaceState.location);
       const uri = this.workspace.authorizeIssued(this.workspaceState.location);
@@ -943,6 +946,7 @@ ${styles}<title>SFTP browser</title></head><body>
         <button type="button" id="workspace-back" class="icon-button" title="Back" aria-label="Workspace back"><span class="codicon codicon-arrow-left" aria-hidden="true"></span></button>
         <button type="button" id="workspace-forward" class="icon-button" title="Forward" aria-label="Workspace forward"><span class="codicon codicon-arrow-right" aria-hidden="true"></span></button>
         <button type="button" id="workspace-up" class="icon-button" title="Up one folder" aria-label="Workspace up one folder"><span class="codicon codicon-arrow-up" aria-hidden="true"></span></button>
+        <button type="button" id="workspace-home" class="icon-button" title="Current workspace (Alt+Home)" aria-label="Current workspace" aria-keyshortcuts="Alt+Home"><span class="codicon codicon-home" aria-hidden="true"></span></button>
         <button type="button" id="workspace-refresh" class="icon-button" title="Refresh workspace" aria-label="Refresh workspace"><span class="codicon codicon-refresh" aria-hidden="true"></span></button>
         <button type="button" class="icon-button columns-button" data-columns-button="workspace" title="Choose visible columns" aria-label="Choose visible columns" aria-haspopup="menu" aria-expanded="false"><span class="codicon codicon-table" aria-hidden="true"></span></button>
         <div class="path-combobox"><input id="workspace-path" role="combobox" aria-label="Workspace path" aria-autocomplete="list" aria-controls="workspace-suggestions" aria-expanded="false" autocomplete="off"><div id="workspace-suggestions" class="path-suggestions" role="listbox" hidden></div></div>

@@ -2,7 +2,7 @@
   "name": "easyssh-manager",
   "displayName": "EasySSH Manager",
   "description": "Manage SSH and SFTP connections from the local desktop extension host.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "hassanm0301",
   "license": "GPL-3.0-only",
   "repository": {

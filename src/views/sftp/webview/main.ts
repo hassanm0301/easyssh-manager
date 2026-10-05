@@ -210,6 +210,7 @@ function renderWorkspaceControls(next: WorkspaceView): void {
   byId<HTMLButtonElement>('workspace-back').disabled = unavailable || !next.canGoBack;
   byId<HTMLButtonElement>('workspace-forward').disabled = unavailable || !next.canGoForward;
   byId<HTMLButtonElement>('workspace-up').disabled = unavailable || !next.canGoUp;
+  byId<HTMLButtonElement>('workspace-home').disabled = unavailable;
   byId<HTMLButtonElement>('workspace-refresh').disabled = unavailable;
   byId<HTMLInputElement>('workspace-path').disabled =
     next.state === 'untrusted' || next.state === 'noWorkspace';
@@ -981,6 +982,17 @@ byId<HTMLButtonElement>('workspace-forward').addEventListener('click', () =>
   command('workspaceForward'),
 );
 byId<HTMLButtonElement>('workspace-up').addEventListener('click', () => command('workspaceUp'));
+function navigateToWorkspace(): void {
+  if (byId<HTMLButtonElement>('workspace-home').disabled) return;
+  command('workspaceNavigate', { target: 'Workspace', input: true });
+}
+byId<HTMLButtonElement>('workspace-home').addEventListener('click', navigateToWorkspace);
+byId<HTMLElement>('workspace-pane').addEventListener('keydown', (event) => {
+  if (event.altKey && event.key === 'Home') {
+    event.preventDefault();
+    navigateToWorkspace();
+  }
+});
 byId<HTMLButtonElement>('workspace-refresh').addEventListener('click', () => {
   const expanded = [...expandedWorkspace];
   workspaceChildren.clear();

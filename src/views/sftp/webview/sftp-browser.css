@@ -1,5 +1,7 @@
+html,
 body {
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
 }
 
 #sftp-browser {
@@ -7,7 +9,8 @@ body {
   grid-template-rows: auto minmax(0, 1fr);
   align-content: start;
   gap: var(--easyssh-space-2);
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   padding: clamp(0.5rem, 1.3vw, 0.9rem);
 }
 
@@ -62,12 +65,15 @@ body {
   grid-template-columns:
     minmax(0, var(--workspace-pane-width, 40%)) 0.65rem
     minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   align-items: stretch;
   gap: 0;
-  min-height: 26rem;
+  min-height: 0;
 }
 
 .pane-resizer {
+  grid-row: 1 / 5;
+  grid-column: 2;
   position: relative;
   min-width: 0.65rem;
   cursor: col-resize;
@@ -93,14 +99,24 @@ body {
 }
 
 .pane {
-  display: flex;
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: 1 / 5;
   min-width: 0;
   min-height: 0;
   overflow: visible;
-  flex-direction: column;
+}
+
+#workspace-pane {
+  grid-column: 1;
+}
+
+#remote-pane {
+  grid-column: 3;
 }
 
 .pane-header {
+  grid-row: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -112,6 +128,8 @@ body {
 }
 
 .pane-header h2 {
+  flex-shrink: 0;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: var(--easyssh-space-2);
@@ -128,6 +146,8 @@ body {
 }
 
 .pane-toolbar {
+  grid-row: 2;
+  align-content: center;
   position: relative;
   z-index: 3;
   display: flex;
@@ -221,6 +241,7 @@ body {
 }
 
 .pane-state {
+  grid-row: 3;
   margin: 0;
   padding: 0.2rem var(--easyssh-space-3);
   color: var(--vscode-descriptionForeground);
@@ -232,10 +253,12 @@ body {
 }
 
 .file-list {
-  min-height: 16rem;
+  grid-row: 4;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   outline: none;
-  flex: 1;
 }
 
 .headers,
@@ -486,6 +509,12 @@ body {
 @media (max-width: 44rem) {
   .browser-layout {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: var(--easyssh-space-2);
+  }
+
+  .pane {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
   }
 
   .pane-resizer {
@@ -493,7 +522,13 @@ body {
   }
 
   #workspace-pane {
-    max-height: 24rem;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  #remote-pane {
+    grid-column: 1;
+    grid-row: 2;
   }
 }
 

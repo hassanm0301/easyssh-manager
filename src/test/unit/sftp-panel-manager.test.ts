@@ -41,7 +41,7 @@ function panel() {
   return { value, receive: () => receive, dispose: () => disposed?.() };
 }
 
-function harness(found = connection()) {
+function harness(found = connection(), workspaceOverrides: Record<string, unknown> = {}) {
   const created: ReturnType<typeof panel>[] = [];
   let serializer:
     | { deserializeWebviewPanel: (panel: unknown, state: unknown) => Promise<void> }
@@ -97,6 +97,7 @@ function harness(found = connection()) {
         dispose: () => undefined,
         readChildren: vi.fn(),
         freshAuthorizedSources: vi.fn(async () => [{ path: '/source' }]),
+        ...workspaceOverrides,
       }) as never,
     resolveConnection: vi.fn(async () => found as never),
   });
@@ -112,6 +113,53 @@ function harness(found = connection()) {
 }
 
 describe('SFTP panel manager lifecycle', () => {
+  it('navigates up from Workspace and returns through the workspace shortcut', async () => {
+    const root = { name: 'project', uri: 'file:///projects/project', path: '/projects/project' };
+    const workspaceView = () => ({ generation: 0, state: 'ready', roots: [root] });
+    const parentOfWorkspace = vi.fn(async () => 'file:///projects');
+    const { manager, created } = harness(connection(), {
+      initialize: workspaceView,
+      view: workspaceView,
+      workspaceParent: () => ({ path: '/projects' }),
+      parentOfWorkspace,
+      readChildren: vi.fn(async () => []),
+      displayPath: () => '/projects',
+      authorizeIssued: () => ({ path: '/projects' }),
+    });
+    await manager.open(CONNECTION_ID);
+    const current = created[0]!;
+    const receive = current.receive()!;
+    await receive({ requestId: 'up', type: 'workspaceUp' });
+    expect(parentOfWorkspace).toHaveBeenCalledOnce();
+    expect(current.value.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'render',
+        value: expect.objectContaining({
+          workspace: expect.objectContaining({ location: 'file:///projects', canGoBack: true }),
+        }),
+      }),
+    );
+    await receive({
+      requestId: 'home',
+      type: 'workspaceNavigate',
+      target: 'Workspace',
+      input: true,
+    });
+    expect(current.value.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'render',
+        value: expect.objectContaining({
+          workspace: expect.objectContaining({
+            location: 'workspace',
+            canGoUp: true,
+            entries: [expect.objectContaining(root)],
+          }),
+        }),
+      }),
+    );
+    manager.dispose();
+  });
+
   it('sends valid layout state to newly opened and recreated webviews', async () => {
     const { manager, created, browser } = harness();
     await manager.open(CONNECTION_ID);

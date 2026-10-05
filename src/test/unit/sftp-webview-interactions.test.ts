@@ -90,6 +90,20 @@ describe('SFTP browser interactions', () => {
     expect(element('#list').style.getPropertyValue('--column-template')).toBe('260px 100px 180px');
   });
 
+  it('returns to the current workspace using the home button and Alt+Home', () => {
+    element('#workspace-home').click();
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'workspaceNavigate', target: 'Workspace', input: true }),
+    );
+    postMessage.mockClear();
+    element('#workspace-list').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Home', altKey: true, bubbles: true }),
+    );
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'workspaceNavigate', target: 'Workspace', input: true }),
+    );
+  });
+
   it('keeps a selected row attached so double-click opens the file', () => {
     show([{ name: 'file.txt', path: '/file.txt', kind: 'file' }]);
     const row = element('.remote-entry');

@@ -262,6 +262,34 @@ export class WorkspacePaneService implements vscode.Disposable {
     return this.issue(parent);
   }
 
+  workspaceParent(): vscode.Uri | undefined {
+    if (!this.host.workspace.isTrusted) return undefined;
+    const roots = this.host.workspace.workspaceFolders ?? [];
+    const first = roots[0]?.uri;
+    if (
+      !first ||
+      roots.some(({ uri }) => uri.scheme !== first.scheme || uri.authority !== first.authority)
+    )
+      return undefined;
+    let path = posix.dirname(first.path);
+    if (path === first.path) return undefined;
+    for (const { uri } of roots.slice(1)) {
+      const parent = posix.dirname(uri.path);
+      while (path !== '/' && parent !== path && !parent.startsWith(`${path}/`)) {
+        path = posix.dirname(path);
+      }
+    }
+    return first.with({ path, query: '', fragment: '' });
+  }
+
+  async parentOfWorkspace(): Promise<string | undefined> {
+    this.assertTrusted();
+    const parent = this.workspaceParent();
+    if (!parent) return undefined;
+    await this.assertDirectory(parent);
+    return this.issue(parent);
+  }
+
   async resolveTypedDirectory(value: unknown, current?: unknown): Promise<string> {
     this.assertTrusted();
     if (
