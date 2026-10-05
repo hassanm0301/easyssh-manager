@@ -87,6 +87,8 @@ describe('connection editor runtime validation', () => {
     expect(html).toContain('beforeunload');
     expect(html).toContain('webview-theme.css');
     expect(html).toContain('connection-editor-style.css');
+    expect(html).toContain('convenience classifier, not a security boundary');
+    expect(html).toContain('Never ask before authorized operations');
     expect(html).toContain('class="surface-card form-card"');
     expect(html).not.toContain('<style');
     const script = /<script nonce="fixed-nonce">([\s\S]*)<\/script>/.exec(html)?.[1];

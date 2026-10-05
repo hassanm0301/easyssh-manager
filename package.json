@@ -373,6 +373,7 @@
     "package:dev": "npm run build:development && npm run prepare:artifacts && vsce package --no-dependencies --pre-release --out artifacts/easyssh-manager-dev.vsix && npm run inspect:vsix -- artifacts/easyssh-manager-dev.vsix",
     "package": "npm run build:production && npm run prepare:artifacts && vsce package --no-dependencies --out artifacts/easyssh-manager.vsix && npm run inspect:vsix -- artifacts/easyssh-manager.vsix",
     "inspect:vsix": "node scripts/inspect-vsix.mjs",
+    "check:mcp-companion": "node scripts/check-mcp-companion.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm run test:integration && npm run build:production"
   },
   "devDependencies": {
@@ -387,6 +388,7 @@
     "eslint": "9.28.0",
     "eslint-config-prettier": "10.1.5",
     "globals": "16.2.0",
+    "jsdom": "26.1.0",
     "mocha": "11.7.0",
     "prettier": "3.5.3",
     "rimraf": "6.0.1",
@@ -397,7 +399,9 @@
     "yauzl": "2.10.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
     "ssh-config": "4.1.0",
-    "ssh2": "1.17.0"
+    "ssh2": "1.17.0",
+    "zod": "4.6.5"
   }
 }

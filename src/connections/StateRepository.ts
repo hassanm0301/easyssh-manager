@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 
 import { EasySshError } from '../common/errors';
 import { isPlainObject } from '../common/validation';
+import { normalizeAllowedRoot } from '../mcp/remotePaths';
 import type { StateChange, StateRepository as StateRepositoryPort } from './ports';
 import {
   defaultAgentAccessPolicy,
@@ -488,8 +489,12 @@ function host(value: unknown): string {
     : invalid('host');
 }
 function normalizedRoot(value: unknown): string {
-  const path = posixPath(value).replace(/\/$/, '') || '/';
-  return path;
+  if (typeof value !== 'string') return invalid('agent access roots');
+  try {
+    return normalizeAllowedRoot(value);
+  } catch {
+    return invalid('agent access roots');
+  }
 }
 function invalid(label: string): never {
   throw new EasySshError('VALIDATION', `Invalid persisted ${label}.`);

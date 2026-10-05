@@ -184,4 +184,52 @@ describe('persisted runtime schema', () => {
       }),
     ).toThrow();
   });
+
+  it('keeps agent grants independent, disabled by default, and rejects above-root allowlists', () => {
+    const initial = emptyPersistedState();
+    const connection = {
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'server',
+      folderId: null,
+      order: 0,
+      host: 'example.test',
+      port: 22,
+      username: 'user',
+      defaultRemotePath: '/',
+      authentication: { type: 'agent' },
+      agentAccess: {
+        enabled: false,
+        allowReadFiles: false,
+        allowWriteFiles: false,
+        allowExec: false,
+        allowInteractiveShell: false,
+        confirmationMode: 'always',
+        allowedRoots: [],
+      },
+      options: {},
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(
+      validatePersistedState({ ...initial, connections: [connection] }).connections[0],
+    ).toMatchObject({
+      agentAccess: {
+        enabled: false,
+        confirmationMode: 'always',
+        allowReadFiles: false,
+        allowWriteFiles: false,
+      },
+    });
+    expect(() =>
+      validatePersistedState({
+        ...initial,
+        connections: [
+          {
+            ...connection,
+            agentAccess: { ...connection.agentAccess, allowedRoots: ['/../../etc'] },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
 });

@@ -74,12 +74,21 @@ const webview = {
   outdir,
 };
 
+const mcpCompanion = {
+  ...base,
+  platform: 'node',
+  format: 'cjs',
+  entryPoints: { 'mcp/companion': resolve(root, 'src/mcp/companion.ts') },
+  outdir,
+};
+
 await rm(outdir, { recursive: true, force: true });
 if (watch) {
   const extensionContext = await context(extensionHost);
   const webviewContext = await context(webview);
-  await Promise.all([extensionContext.watch(), webviewContext.watch()]);
+  const mcpContext = await context(mcpCompanion);
+  await Promise.all([extensionContext.watch(), webviewContext.watch(), mcpContext.watch()]);
   console.log('Watching EasySSH Manager bundles.');
 } else {
-  await Promise.all([build(extensionHost), build(webview)]);
+  await Promise.all([build(extensionHost), build(webview), build(mcpCompanion)]);
 }
