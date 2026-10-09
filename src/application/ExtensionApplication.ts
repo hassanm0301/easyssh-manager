@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { CommandRegistry } from '../commands/CommandRegistry';
 import { DisposableStore } from '../common/disposables';
 import { EasySshError } from '../common/errors';
+import { assertMcpAvailable } from '../common/platformCapabilities';
 import { createVsCodeLogger, type EasySshLogger } from '../common/logger';
 import { ConnectionService } from '../connections/ConnectionService';
 import {
@@ -551,6 +552,7 @@ export class ExtensionApplication implements vscode.Disposable {
     this.commands.register({
       id: 'easysshManager.viewMcpAudit',
       execute: async () => {
+        assertMcpAvailable(process.platform);
         if (!this.mcpAudit)
           throw new EasySshError('UNSUPPORTED', 'Configure MCP before viewing its audit log.');
         const rawOffset = await this.vscodeApi.window.showInputBox({
@@ -572,6 +574,7 @@ export class ExtensionApplication implements vscode.Disposable {
     this.commands.register({
       id: 'easysshManager.exportMcpAudit',
       execute: async () => {
+        assertMcpAvailable(process.platform);
         if (!this.mcpAudit)
           throw new EasySshError('UNSUPPORTED', 'Configure MCP before exporting its audit log.');
         const target = await this.vscodeApi.window.showSaveDialog({
@@ -594,6 +597,7 @@ export class ExtensionApplication implements vscode.Disposable {
     this.commands.register({
       id: 'easysshManager.clearMcpAudit',
       execute: async () => {
+        assertMcpAvailable(process.platform);
         if (!this.mcpAudit)
           throw new EasySshError('UNSUPPORTED', 'Configure MCP before clearing its audit log.');
         const choice = await this.vscodeApi.window.showWarningMessage(
@@ -620,6 +624,7 @@ export class ExtensionApplication implements vscode.Disposable {
   }
 
   private async configureMcp(): Promise<void> {
+    assertMcpAvailable(process.platform);
     const context = this.context;
     const companionPath = join(context.extensionPath, 'dist', 'mcp', 'companion.js');
     try {

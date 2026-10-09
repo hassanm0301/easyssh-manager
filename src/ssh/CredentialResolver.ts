@@ -1,8 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, normalize, resolve } from 'node:path';
 import { utils as ssh2Utils } from 'ssh2';
 
+import { resolveLocalPath, type LocalPathOptions } from '../common/localPaths';
 import { EasySshError } from '../common/errors';
 import type { CredentialStore } from '../connections/ports';
 import type { RemoteConnection } from '../connections/types';
@@ -14,6 +13,7 @@ import type {
 } from './ports';
 
 const MAX_PRIVATE_KEY_BYTES = 1024 * 1024;
+const WINDOWS_OPENSSH_AGENT = String.raw`\\.\pipe\openssh-ssh-agent`;
 
 export interface CredentialPrompt {
   showInputBox(options: {
@@ -28,6 +28,7 @@ export class DefaultCredentialResolver implements CredentialResolver {
     private readonly store: CredentialStore,
     private readonly prompt: CredentialPrompt,
     private readonly environment: Readonly<Record<string, string | undefined>> = process.env,
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
   async acquire(
@@ -52,6 +53,15 @@ export class DefaultCredentialResolver implements CredentialResolver {
 
     if (connection.authentication.type === 'agent') {
       const agentSocket = this.environment.SSH_AUTH_SOCK?.trim();
+      if (this.platform === 'win32') {
+        if (!agentSocket) return new MutableCredentialLease({ agentSocket: WINDOWS_OPENSSH_AGENT });
+        if (!isWindowsNamedPipe(agentSocket))
+          throw new EasySshError(
+            'MISSING_CREDENTIAL',
+            `SSH_AUTH_SOCK for ${connection.name} must name a Windows SSH-agent pipe (for example ${WINDOWS_OPENSSH_AGENT}).`,
+          );
+        return new MutableCredentialLease({ agentSocket });
+      }
       if (!agentSocket)
         throw new EasySshError(
           'MISSING_CREDENTIAL',
@@ -60,9 +70,11 @@ export class DefaultCredentialResolver implements CredentialResolver {
       return new MutableCredentialLease({ agentSocket });
     }
 
-    const path = expandPrivateKeyPath(connection.authentication.privateKeyPath);
     let bytes: Buffer;
     try {
+      const path = expandPrivateKeyPath(connection.authentication.privateKeyPath, {
+        platform: this.platform,
+      });
       const stat = await lstat(path);
       if (!stat.isFile())
         throw new EasySshError(
@@ -121,10 +133,14 @@ export class DefaultCredentialResolver implements CredentialResolver {
   }
 }
 
-export function expandPrivateKeyPath(value: string): string {
-  const expanded =
-    value === '~' ? homedir() : value.startsWith('~/') ? resolve(homedir(), value.slice(2)) : value;
-  return normalize(isAbsolute(expanded) ? expanded : resolve(expanded));
+export function expandPrivateKeyPath(value: string, options: LocalPathOptions = {}): string {
+  return resolveLocalPath(value, options);
+}
+
+function isWindowsNamedPipe(endpoint: string): boolean {
+  // ssh2 accepts Windows named-pipe paths as agent endpoints. Accept either
+  // separator consistently, while excluding drive paths and other socket forms.
+  return !endpoint.includes('\0') && /^[\\/]{2}\.[\\/]pipe[\\/].+$/.test(endpoint);
 }
 
 function isEncryptedKeyError(error: Error): boolean {

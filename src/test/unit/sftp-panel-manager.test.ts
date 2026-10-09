@@ -61,6 +61,7 @@ function harness(found = connection(), workspaceOverrides: Record<string, unknow
       }),
       showErrorMessage: vi.fn(),
     },
+    env: { clipboard: { writeText: vi.fn(async () => undefined) } },
   };
   const browser = {
     list: vi.fn(async (_id: string, path: string) => ({ path, entries: [] })),
@@ -268,5 +269,23 @@ describe('SFTP panel manager lifecycle', () => {
         }),
       }),
     );
+  });
+
+  it('copies the native Windows filesystem path from an issued file URI', async () => {
+    const nativePath = 'C:\\Users\\Hassan Météor\\project files\\source.txt';
+    const issuedUri = {
+      scheme: 'file',
+      fsPath: nativePath,
+      toString: () => 'file:///C:/Users/Hassan%20M%C3%A9t%C3%A9or/project%20files/source.txt',
+    };
+    const { manager, api, created } = harness(connection(), {
+      authorizeIssued: () => issuedUri,
+    });
+    await manager.open(CONNECTION_ID);
+    const receive = created[0]?.receive();
+    if (!receive) throw new Error('Panel did not register its message listener.');
+    await receive({ requestId: 'copy', type: 'workspaceCopyPath', uri: issuedUri.toString() });
+    expect(api.env.clipboard.writeText).toHaveBeenCalledWith(nativePath);
+    manager.dispose();
   });
 });

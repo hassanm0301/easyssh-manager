@@ -3,6 +3,12 @@ import { isIP } from 'node:net';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import SSHConfig from 'ssh-config';
+import { expandLocalHome } from '../common/localPaths';
+
+export interface OpenSshImporterPathOptions {
+  /** Allows callers and tests to select the local path flavor explicitly. */
+  platform?: NodeJS.Platform | 'posix' | 'win32';
+}
 
 export interface ImportIssue {
   code: string;
@@ -45,14 +51,30 @@ export class OpenSshImporter {
     private readonly files: ImportFileSystem = defaults,
     private readonly homeDirectory: () => string = os.homedir,
     private readonly username: () => string = () => os.userInfo().username,
+    private readonly pathOptions: OpenSshImporterPathOptions = {},
   ) {}
 
+  private get pathApi(): typeof path.posix | typeof path.win32 {
+    return this.pathOptions.platform === 'win32'
+      ? path.win32
+      : this.pathOptions.platform === 'posix'
+        ? path.posix
+        : path;
+  }
+
+  private expandHome(value: string): string {
+    return expandLocalHome(value, {
+      platform: this.pathOptions.platform ?? process.platform,
+      homeDirectory: this.homeDirectory(),
+    });
+  }
+
   defaultConfigPath(): string {
-    return path.join(this.homeDirectory(), '.ssh', 'config');
+    return this.pathApi.join(this.homeDirectory(), '.ssh', 'config');
   }
 
   async discover(sourcePath = this.defaultConfigPath()): Promise<SshImportCandidate[]> {
-    const resolvedSource = path.resolve(expandHome(sourcePath, this.homeDirectory()));
+    const resolvedSource = this.pathApi.resolve(this.expandHome(sourcePath));
     const loaded = await this.loadIncludes(resolvedSource, new Set(), 0, { files: 0, bytes: 0 });
     // Parse through the reviewed/pinned parser as a syntax guard. Computation below is deliberately
     // local so Match exec is never passed to any execution-capable implementation.
@@ -150,8 +172,8 @@ export class OpenSshImporter {
       const patterns = splitArguments(match[1] ?? '');
       for (const pattern of patterns) {
         const paths = await this.expandInclude(
-          path.dirname(canonical),
-          expandHome(pattern, this.homeDirectory()),
+          this.pathApi.dirname(canonical),
+          this.expandHome(pattern),
         );
         if (paths.length === 0)
           output.push(
@@ -171,21 +193,24 @@ export class OpenSshImporter {
   }
 
   private async expandInclude(base: string, pattern: string): Promise<string[]> {
-    const candidate = path.isAbsolute(pattern) ? pattern : path.resolve(base, pattern);
+    const pathApi = this.pathApi;
+    const candidate = pathApi.normalize(
+      pathApi.isAbsolute(pattern) ? pattern : pathApi.resolve(base, pattern),
+    );
     if (!/[?*[]/.test(candidate)) return [candidate];
-    const root = path.parse(candidate).root;
-    const segments = candidate.slice(root.length).split(path.sep).filter(Boolean);
+    const root = pathApi.parse(candidate).root;
+    const segments = candidate.slice(root.length).split(pathApi.sep).filter(Boolean);
     let paths = [root];
     for (const segment of segments) {
       const next: string[] = [];
       for (const parent of paths) {
         if (!/[?*[]/.test(segment)) {
-          next.push(path.join(parent, segment));
+          next.push(pathApi.join(parent, segment));
           continue;
         }
         try {
           const names = (await this.files.readdir(parent)).filter((name) => glob(segment, name));
-          next.push(...names.sort().map((name) => path.join(parent, name)));
+          next.push(...names.sort().map((name) => pathApi.join(parent, name)));
         } catch {
           // An unreadable glob branch has no matches; its include is marked unresolved by the caller.
         }
@@ -307,7 +332,11 @@ export class OpenSshImporter {
       blocking.push({ code: 'PORT', message: `Invalid resolved port: ${rawPort}` });
     const identityFiles = (values.get('identityfile') ?? [])
       .filter((value) => value.toLowerCase() !== 'none')
-      .map((value) => expandTokens(value, { ...tokenContext, host, user }, blocking));
+      .map((value) =>
+        this.pathApi.normalize(
+          this.expandHome(expandTokens(value, { ...tokenContext, host, user }, blocking)),
+        ),
+      );
     const preferred = values.get('preferredauthentications')?.[0]?.toLowerCase();
     const identitiesOnly = values.get('identitiesonly')?.[0]?.toLowerCase();
     let selectedAuthentication: SshImportCandidate['selectedAuthentication'] = identityFiles.length
@@ -416,9 +445,6 @@ function splitArguments(value: string): string[] {
 }
 function unquote(value: string): string {
   return value.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, '$1$2');
-}
-function expandHome(value: string, home: string): string {
-  return value === '~' || value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
 }
 function expandTokens(
   value: string,

@@ -1,12 +1,19 @@
 import * as assert from 'node:assert';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 
+import { WINDOWS_MCP_UNAVAILABLE_MESSAGE } from '../../../common/platformCapabilities';
+import { ExtensionApplication } from '../../../application/ExtensionApplication';
 import { ImportPreview } from '../../../views/connections/ImportPreview';
 
 suite('EasySSH Manager extension', () => {
   test('activates from its contributed view without errors', async () => {
     const extension = vscode.extensions.getExtension('hassanm0301.easyssh-manager');
     assert.ok(extension, 'extension should be discoverable');
+    assert.ok(extension.packageJSON.os.includes(process.platform));
+    assert.ok(['linux', 'win32'].includes(process.platform));
+    assert.equal(os.platform(), process.platform);
     assert.deepEqual(extension.packageJSON.extensionKind, ['ui']);
     assert.equal(extension.packageJSON.main, './dist/extension.js');
     assert.equal(extension.packageJSON.browser, undefined);
@@ -54,10 +61,43 @@ suite('EasySSH Manager extension', () => {
       'openRemoteFile',
       'openRemoteFileForDevelopment',
       'testConnection',
+      'configureMcp',
+      'viewMcpAudit',
+      'exportMcpAudit',
+      'clearMcpAudit',
+      'uploadFiles',
+      'uploadFolder',
     ].map((name) => `easysshManager.${name}`);
     const registered = new Set(await vscode.commands.getCommands(true));
     for (const command of expected) assert.ok(registered.has(command), `${command} is registered`);
     await vscode.commands.executeCommand('easysshManager.refreshConnections');
+  });
+
+  test('round trips native Windows drive and UNC file URIs', function () {
+    if (process.platform !== 'win32') this.skip();
+
+    const drivePath = 'C:\\Users\\Zoë Example\\workspace\\file.txt';
+    const driveUri = vscode.Uri.file(drivePath);
+    assert.equal(driveUri.scheme, 'file');
+    // VS Code canonicalizes the drive letter to lowercase in fsPath.
+    assert.equal(driveUri.fsPath, `c:${path.win32.normalize(drivePath).slice(2)}`);
+
+    const uncPath = '\\\\server\\share\\Zoë Example\\file.txt';
+    const uncUri = vscode.Uri.file(uncPath);
+    assert.equal(uncUri.scheme, 'file');
+    assert.equal(uncUri.fsPath, path.win32.normalize(uncPath));
+  });
+
+  test('rejects Windows MCP setup before reading application context', async function () {
+    if (process.platform !== 'win32') this.skip();
+
+    const uninitialized = Object.create(ExtensionApplication.prototype) as ExtensionApplication;
+    const configureMcp = Reflect.get(uninitialized, 'configureMcp') as () => Promise<void>;
+    await assert.rejects(configureMcp.call(uninitialized), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, WINDOWS_MCP_UNAVAILABLE_MESSAGE);
+      return true;
+    });
   });
 });
 

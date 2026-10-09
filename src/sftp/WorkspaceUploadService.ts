@@ -6,6 +6,7 @@ import type { Readable, Writable } from 'node:stream';
 import type * as vscode from 'vscode';
 
 import { EasySshError, isCancellation } from '../common/errors';
+import { resolveLocalPath, type LocalPathOptions } from '../common/localPaths';
 import type { ConnectionId } from '../connections/types';
 import type { CancellationTokenLike } from '../ssh/ports';
 import type { RemoteResourceCache } from './RemoteResourceCache';
@@ -148,7 +149,10 @@ export class WorkspacePaneService implements vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly watchers: vscode.Disposable[] = [];
 
-  constructor(private readonly host: WorkspaceHost) {
+  constructor(
+    private readonly host: WorkspaceHost,
+    private readonly localPathOptions: LocalPathOptions = {},
+  ) {
     this.subscriptions.push(
       host.workspace.onDidChangeWorkspaceFolders(() => {
         this.revokeAndRefresh();
@@ -440,9 +444,7 @@ export class WorkspacePaneService implements vscode.Disposable {
   private resolveInputUri(value: string, base: vscode.Uri | undefined): vscode.Uri {
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value)) return this.host.Uri.parse(value, true);
     if (base?.scheme === 'file') {
-      return posix.isAbsolute(value)
-        ? this.host.Uri.file(posix.normalize(value))
-        : this.host.Uri.joinPath(base, value);
+      return this.localFileUri(value, base);
     }
     if (base) {
       const path = posix.isAbsolute(value)
@@ -450,8 +452,30 @@ export class WorkspacePaneService implements vscode.Disposable {
         : posix.normalize(posix.join(base.path, value));
       return base.with({ path, query: '', fragment: '' });
     }
-    if (posix.isAbsolute(value)) return this.host.Uri.file(posix.normalize(value));
+    if (isAbsoluteLocalInput(value, this.localPathOptions.platform)) {
+      return this.localFileUri(value, undefined);
+    }
     throw new EasySshError('VALIDATION', 'Choose a workspace root before using a relative path.');
+  }
+
+  private localFileUri(value: string, base: vscode.Uri | undefined): vscode.Uri {
+    const platform = this.localPathOptions.platform ?? process.platform;
+    if (!base && !isAbsoluteLocalInput(value, platform)) {
+      throw new EasySshError('VALIDATION', 'Choose a workspace root before using a relative path.');
+    }
+    try {
+      return this.host.Uri.file(
+        resolveLocalPath(value, {
+          ...this.localPathOptions,
+          ...(base ? { cwd: base.fsPath } : {}),
+        }),
+      );
+    } catch (error) {
+      throw new EasySshError(
+        'VALIDATION',
+        error instanceof Error ? error.message : 'The local workspace path is invalid.',
+      );
+    }
   }
 
   private async assertDirectory(uri: vscode.Uri): Promise<void> {
@@ -507,6 +531,12 @@ export class WorkspacePaneService implements vscode.Disposable {
 
 function displayUri(uri: vscode.Uri): string {
   return uri.scheme === 'file' ? uri.fsPath : uri.toString();
+}
+
+function isAbsoluteLocalInput(value: string, platform: LocalPathOptions['platform']): boolean {
+  return platform === 'win32' || (platform === undefined && process.platform === 'win32')
+    ? /^[a-zA-Z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]/.test(value)
+    : posix.isAbsolute(value);
 }
 
 export interface UploadServiceOptions {

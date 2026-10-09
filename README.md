@@ -1,8 +1,8 @@
 # EasySSH Manager
 
-EasySSH Manager is a Linux desktop extension for VSCodium and VS Code that
-brings SSH connection management and integrated remote terminals into the
-editor. It runs in the local UI extension host so credentials, private keys,
+EasySSH Manager is a Linux-first desktop extension for VSCodium and VS Code
+with native Windows 11 x64 client support. It brings SSH connection management
+and integrated remote terminals into the editor. It runs in the local UI extension host so credentials, private keys,
 SSH agent access, host trust, and connection state remain on the user's
 machine, including when a remote workspace is open.
 
@@ -36,7 +36,7 @@ terminals, and SFTP browsing, editing, and transfers.
   check.
 - Docker OpenSSH fixture and Linux integration-test entry point for SSH/SFTP
   transport validation.
-- Password, single-key, encrypted-key, and Linux SSH-agent authentication with
+- Password, single-key, encrypted-key, and Linux/Windows OpenSSH-agent authentication with
   no implicit credential fallback.
 - Extension-owned trust-on-first-use host-key verification, persisted SHA-256
   fingerprints, and blocking changed-key confirmation.
@@ -54,7 +54,13 @@ terminals, and SFTP browsing, editing, and transfers.
 
 ## Current scope
 
-MCP support is enabled explicitly with **EasySSH Manager: Configure MCP**.
+The desktop client connects to Linux/POSIX SSH and SFTP servers. Remote Windows
+servers, Pageant, Windows ARM64 and macOS are outside the validated support scope.
+Windows release validation is tracked in
+[the Windows acceptance checklist](docs/windows-support.md); passing Linux checks
+alone does not validate a Windows release.
+
+MCP support is available on Linux and enabled explicitly with **EasySSH Manager: Configure MCP**.
 The extension bundles a separate Node.js stdio companion and exposes a
 session-scoped Unix-domain IPC bridge only after confirmation. The companion
 has no SSH, SFTP, credential, host-trust, or policy authority; all calls are
@@ -72,6 +78,35 @@ remote MCP, and background daemons are not supported. **View MCP Audit**,
 **Export MCP Audit**, and **Clear MCP Audit** manage the metadata-only audit.
 The extension includes no telemetry and never consults or writes OpenSSH
 `known_hosts`.
+
+## Windows setup
+
+Install the VSIX in native Windows VS Code or VSCodium. Password and private-key
+authentication use the same connection editor as Linux. Keys stay on disk; key
+paths support drive roots, UNC shares, spaces, Unicode, `~/` and `~\`.
+The default import location is the current user's `.ssh/config` under their home
+directory. Quoted config paths are useful when directories contain spaces.
+
+For agent authentication, enable/start the Windows OpenSSH Authentication Agent
+service using Windows' OpenSSH setup, then load your key with `ssh-add` and check
+it with `ssh-add -l`. EasySSH uses `\\.\pipe\openssh-ssh-agent` when
+`SSH_AUTH_SOCK` is absent. If you set `SSH_AUTH_SOCK`, it must identify a Windows
+named pipe. An unavailable agent causes an authentication error; EasySSH never
+falls back to a password or a default key. Restart the editor after changing
+its environment.
+
+Workspace navigation accepts drive-absolute and UNC paths. Drive-relative
+inputs such as `C:folder` and current-drive-rooted inputs such as `\folder`
+are rejected; choose a workspace root for relative paths.
+Downloads to Windows local files reject unsupported filenames and destinations
+that collide ignoring case before writing anything. Names are never silently
+renamed. A locked destination can prevent replacement; the original is retained
+and cleanup failures are reported. Virtual filesystem providers retain their
+own URI and transfer-limit behavior.
+
+Windows MCP setup and audit commands report that MCP is unavailable in this
+release, before creating bridge, discovery or audit files. Linux MCP remains
+supported. A separate Windows security port is required before enabling MCP.
 
 ## License
 

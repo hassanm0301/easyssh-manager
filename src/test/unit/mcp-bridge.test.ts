@@ -8,7 +8,7 @@ import { McpBridge } from '../../mcp/McpBridge';
 import { McpIpcServer } from '../../mcp/IpcServer';
 import { IpcFrameDecoder, encodeFrame } from '../../mcp/ipcProtocol';
 
-describe('activation-scoped MCP bridge', () => {
+describe.runIf(process.platform === 'linux')('activation-scoped MCP bridge', () => {
   let directory = '';
   let bridge: McpBridge | undefined;
   const originalRuntimeDir = process.env.XDG_RUNTIME_DIR;

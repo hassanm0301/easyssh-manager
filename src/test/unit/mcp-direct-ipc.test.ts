@@ -29,7 +29,7 @@ const fixtureConnection: RemoteConnection = {
   updatedAt: 1,
 };
 
-describe('direct authenticated IPC authorization', () => {
+describe.runIf(process.platform === 'linux')('direct authenticated IPC authorization', () => {
   let directory = '';
   let bridge: McpBridge | undefined;
 

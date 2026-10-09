@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, mkdir, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -102,6 +102,7 @@ describe('credential resolver', () => {
       new Store(),
       { showInputBox: vi.fn(async () => 'must-not-be-used') },
       {},
+      'linux',
     );
     await expect(resolver.acquire(profile({ type: 'agent' }), scope)).rejects.toMatchObject({
       code: 'MISSING_CREDENTIAL',
@@ -110,9 +111,49 @@ describe('credential resolver', () => {
       new Store(),
       { showInputBox: vi.fn() },
       { SSH_AUTH_SOCK: '/tmp/agent.sock' },
+      'linux',
     );
     await expect(active.acquire(profile({ type: 'agent' }), scope)).resolves.toMatchObject({
       agentSocket: '/tmp/agent.sock',
+    });
+  });
+
+  it('selects Windows OpenSSH named pipes and rejects incompatible agent endpoints', async () => {
+    const resolver = new DefaultCredentialResolver(
+      new Store(),
+      { showInputBox: vi.fn() },
+      {},
+      'win32',
+    );
+    await expect(resolver.acquire(profile({ type: 'agent' }), scope)).resolves.toMatchObject({
+      agentSocket: String.raw`\\.\pipe\openssh-ssh-agent`,
+    });
+
+    for (const endpoint of [
+      String.raw`\\.\pipe\custom-agent`,
+      '//./pipe/custom-agent',
+      String.raw`\\.\pipe\nested\agent`,
+    ]) {
+      const configured = new DefaultCredentialResolver(
+        new Store(),
+        { showInputBox: vi.fn() },
+        { SSH_AUTH_SOCK: endpoint },
+        'win32',
+      );
+      await expect(configured.acquire(profile({ type: 'agent' }), scope)).resolves.toMatchObject({
+        agentSocket: endpoint,
+      });
+    }
+
+    const incompatible = new DefaultCredentialResolver(
+      new Store(),
+      { showInputBox: vi.fn() },
+      { SSH_AUTH_SOCK: '/tmp/agent.sock' },
+      'win32',
+    );
+    await expect(incompatible.acquire(profile({ type: 'agent' }), scope)).rejects.toMatchObject({
+      code: 'MISSING_CREDENTIAL',
+      message: expect.stringContaining('Windows SSH-agent pipe'),
     });
   });
 
@@ -196,6 +237,16 @@ describe('credential resolver', () => {
 
   it('expands and normalizes local paths', () => {
     expect(expandPrivateKeyPath('~')).not.toContain('~');
-    expect(expandPrivateKeyPath('./a/../key')).toMatch(/\/key$/);
+    expect(basename(expandPrivateKeyPath('./a/../key'))).toBe('key');
+    expect(
+      expandPrivateKeyPath('~\\Documents\\résumé key', {
+        platform: 'win32',
+        homeDirectory: 'C:\\Users\\Tester',
+      }),
+    ).toBe('C:\\Users\\Tester\\Documents\\résumé key');
+    expect(expandPrivateKeyPath('D:/keys/é clé', { platform: 'win32' })).toBe('D:\\keys\\é clé');
+    expect(expandPrivateKeyPath('\\\\server\\share\\my key', { platform: 'win32' })).toBe(
+      '\\\\server\\share\\my key',
+    );
   });
 });
