@@ -42,6 +42,8 @@ export interface DownloadOptions {
   readonly maxEntries?: number;
   readonly maxBufferedTransferMiB: () => number;
   readonly chunkBytes?: number;
+  /** Injectable for platform-specific preflight tests. Defaults to the extension host platform. */
+  readonly platform?: NodeJS.Platform;
 }
 
 interface DownloadHost {
@@ -207,6 +209,12 @@ export class DownloadService {
     } finally {
       await lease[Symbol.asyncDispose]();
     }
+    if (
+      (this.options.platform ?? process.platform) === 'win32' &&
+      destinationRoot.scheme === 'file'
+    ) {
+      validateWindowsDestinations(items);
+    }
     return { destinationRoot, items, totalBytes };
   }
 
@@ -309,7 +317,12 @@ export class DownloadService {
               }
               summary.failed.push({
                 path: item.relativePath,
-                message: error instanceof EasySshError ? error.message : 'Download failed.',
+                message:
+                  error instanceof EasySshError
+                    ? error.message
+                    : error instanceof Error
+                      ? error.message
+                      : 'Download failed.',
               });
             }
           }
@@ -418,8 +431,9 @@ export class DownloadService {
       if (temporaryKnown) {
         try {
           await fs.rm(tempPath, { force: true });
-        } catch {
-          summary.cleanupFailures.push(tempPath);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : 'Unknown cleanup error.';
+          summary.cleanupFailures.push(`${tempPath}: ${detail}`);
         }
       }
     }
@@ -520,6 +534,57 @@ function isSafeRelativeSegment(value: string): boolean {
     !value.includes('\\') &&
     !value.includes('\0')
   );
+}
+
+/** Windows file destinations cannot represent several POSIX names, and paths are case-insensitive. */
+function validateWindowsDestinations(items: readonly PlannedDownload[]): void {
+  const destinations = new Map<string, string>();
+  const prefixes = new Map<string, string>();
+  for (const item of items) {
+    const segments = item.relativePath.split('/');
+    for (const segment of segments) {
+      if (isInvalidWindowsFilename(segment)) {
+        throw new EasySshError(
+          'VALIDATION',
+          `Remote filename '${segment}' cannot be represented on Windows.`,
+        );
+      }
+    }
+    let originalPrefix = '';
+    for (const segment of segments) {
+      originalPrefix = originalPrefix ? `${originalPrefix}/${segment}` : segment;
+      const foldedPrefix = originalPrefix.toUpperCase();
+      const previousPrefix = prefixes.get(foldedPrefix);
+      if (previousPrefix !== undefined && previousPrefix !== originalPrefix) {
+        throw new EasySshError(
+          'VALIDATION',
+          `Remote paths '${previousPrefix}' and '${originalPrefix}' collide on a Windows destination.`,
+        );
+      }
+      prefixes.set(foldedPrefix, originalPrefix);
+    }
+
+    const folded = originalPrefix.toUpperCase();
+    const previous = destinations.get(folded);
+    if (previous !== undefined) {
+      throw new EasySshError(
+        'VALIDATION',
+        `Remote paths '${previous}' and '${item.relativePath}' collide on a Windows destination.`,
+      );
+    }
+    destinations.set(folded, item.relativePath);
+  }
+}
+
+function isInvalidWindowsFilename(value: string): boolean {
+  // eslint-disable-next-line no-control-regex -- Windows rejects every ASCII control character in a filename.
+  if (/[<>:"/\\|?*\u0000-\u001f]/u.test(value) || /[ .]$/u.test(value)) return true;
+  // Windows reserves these device names even when an extension is present.
+  const stem = value
+    .split('.', 1)[0]!
+    .replace(/[ .]+$/u, '')
+    .toUpperCase();
+  return /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/u.test(stem);
 }
 
 function trimPath(value: string): string {

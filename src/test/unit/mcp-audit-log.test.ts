@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { McpAuditLog } from '../../mcp/McpAuditLog';
 
-describe('metadata-only MCP audit log', () => {
+describe.runIf(process.platform === 'linux')('metadata-only MCP audit log', () => {
   let directory = '';
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });

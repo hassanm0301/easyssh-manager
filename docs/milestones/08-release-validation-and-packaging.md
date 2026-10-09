@@ -4,6 +4,11 @@
 
 Turn the feature-complete prerelease into a defensible Linux `1.0.0` release. This milestone adds no new product surface. Fix discovered defects in their owning subsystem, add regression tests, freeze public contracts, execute the complete release matrix, finalize documentation, and publish a reproducible checksummed VSIX on GitHub.
 
+Native Windows client support adds the separate
+[Windows acceptance checklist](../windows-support.md) to these Linux-first gates.
+Windows support must pass both CI and manual Windows 11 x64 validation before
+publication. Windows MCP remains unavailable pending its own security port.
+
 Do not publish to Visual Studio Marketplace or Open VSX in v1.
 
 ## Goal-mode rules

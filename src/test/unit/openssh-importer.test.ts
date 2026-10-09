@@ -114,6 +114,7 @@ describe('OpenSshImporter', () => {
       loopFiles,
       () => '/home',
       () => 'user',
+      { platform: 'posix' },
     ).discover('/config');
     expect(loop[0]?.blockingIssues).toContainEqual(
       expect.objectContaining({ code: 'INCLUDE_LOOP' }),
@@ -128,6 +129,7 @@ describe('OpenSshImporter', () => {
       new MemoryFiles(depthEntries),
       () => '/home',
       () => 'user',
+      { platform: 'posix' },
     ).discover('/config');
     expect(depth[0]?.blockingIssues).toContainEqual(
       expect.objectContaining({ code: 'INCLUDE_DEPTH' }),
@@ -142,6 +144,7 @@ describe('OpenSshImporter', () => {
       new MemoryFiles(countEntries),
       () => '/home',
       () => 'user',
+      { platform: 'posix' },
     ).discover('/config');
     expect(count[0]?.blockingIssues).toContainEqual(
       expect.objectContaining({ code: 'INCLUDE_FILES' }),
@@ -157,6 +160,7 @@ describe('OpenSshImporter', () => {
         oversized,
         () => '/home',
         () => 'user',
+        { platform: 'posix' },
       ).discover('/config'),
     ).rejects.toThrow('safe 8 MiB limit');
 
@@ -167,10 +171,81 @@ describe('OpenSshImporter', () => {
       tokens,
       () => '/home/user',
       () => 'local',
+      { platform: 'posix' },
     ).discover('/config');
     expect(candidates[0]?.blockingIssues).toContainEqual(
       expect.objectContaining({ code: 'UNSUPPORTED_TOKEN' }),
     );
+  });
+
+  it('uses Windows homes, quoted identity paths, CRLF, and drive or UNC include globs', async () => {
+    const entries = {
+      'C:\\Users\\Test\\.ssh\\config':
+        'Include "conf.d\\*.conf"\r\nHost drive\r\n  IdentityFile "~\\.ssh\\keys\\my key"\r\nHost unc\r\n  HostName unc.example\r\n',
+      'C:\\Users\\Test\\.ssh\\conf.d\\child.conf': 'Host child\r\n  HostName child.example\r\n',
+      '\\\\server\\share\\ssh\\config':
+        'Host shared\r\n  IdentityFile "\\\\server\\share\\keys\\id key"\r\n',
+    };
+    const files = new MemoryFiles(entries, '\\');
+    const importer = new OpenSshImporter(
+      files,
+      () => 'C:\\Users\\Test',
+      () => 'tester',
+      { platform: 'win32' },
+    );
+
+    expect(importer.defaultConfigPath()).toBe('C:\\Users\\Test\\.ssh\\config');
+    const candidates = await importer.discover();
+    expect(candidates.map(({ name }) => name)).toEqual(['child', 'drive', 'unc']);
+    expect(candidates.find(({ name }) => name === 'drive')?.identityFiles).toEqual([
+      'C:\\Users\\Test\\.ssh\\keys\\my key',
+    ]);
+
+    const unc = await importer.discover('\\\\server\\share\\ssh\\config');
+    expect(unc[0]?.identityFiles).toEqual(['\\\\server\\share\\keys\\id key']);
+  });
+
+  it('resolves Windows relative includes and contains Windows include recursion', async () => {
+    const root = 'D:\\ssh';
+    const files = new MemoryFiles(
+      {
+        [`${root}\\config`]: 'Host relative\r\n  Include "parts\\*.conf"\r\n',
+        [`${root}\\parts\\a.conf`]:
+          'Host included\r\n  HostName included.example\r\n  Include "..\\config"\r\n',
+      },
+      '\\',
+    );
+    const candidates = await new OpenSshImporter(
+      files,
+      () => 'C:\\Users\\Test',
+      () => 'tester',
+      { platform: 'win32' },
+    ).discover(`${root}\\config`);
+
+    expect(candidates.map(({ name }) => name)).toEqual(['relative', 'included']);
+    expect(candidates.find(({ name }) => name === 'included')?.blockingIssues).toContainEqual(
+      expect.objectContaining({ code: 'INCLUDE_LOOP' }),
+    );
+  });
+
+  it('expands absolute forward-slash drive and UNC include globs on Windows', async () => {
+    const entries = {
+      'C:\\Users\\Test\\.ssh\\config': 'Include C:/Users/Test/.ssh/conf.d/*.conf\r\n',
+      'C:\\Users\\Test\\.ssh\\conf.d\\drive.conf': 'Host drive\r\n  HostName drive.example\r\n',
+      '\\\\server\\share\\ssh\\config': 'Include //server/share/ssh/conf.d/*.conf\r\n',
+      '\\\\server\\share\\ssh\\conf.d\\unc.conf': 'Host unc\r\n  HostName unc.example\r\n',
+    };
+    const importer = new OpenSshImporter(
+      new MemoryFiles(entries, '\\'),
+      () => 'C:\\Users\\Test',
+      () => 'tester',
+      { platform: 'win32' },
+    );
+
+    expect((await importer.discover()).map(({ name }) => name)).toEqual(['drive']);
+    expect(
+      (await importer.discover('\\\\server\\share\\ssh\\config')).map(({ name }) => name),
+    ).toEqual(['unc']);
   });
 });
 
@@ -178,7 +253,10 @@ class MemoryFiles implements ImportFileSystem {
   readonly canonical = new Map<string, string>();
   private readonly values = new Map<string, Uint8Array>();
 
-  constructor(entries: Record<string, string>) {
+  constructor(
+    entries: Record<string, string>,
+    private readonly separator = '/',
+  ) {
     for (const [file, value] of Object.entries(entries)) {
       this.values.set(file, new TextEncoder().encode(value));
       this.canonical.set(file, file);
@@ -198,9 +276,15 @@ class MemoryFiles implements ImportFileSystem {
   }
 
   async readdir(directory: string): Promise<string[]> {
-    const prefix = `${directory.replace(/\/$/, '')}/`;
+    const prefix = `${directory.replace(new RegExp(`${escapeRegExp(this.separator)}$`), '')}${this.separator}`;
     return [...this.values.keys()]
-      .filter((file) => file.startsWith(prefix) && !file.slice(prefix.length).includes('/'))
+      .filter(
+        (file) => file.startsWith(prefix) && !file.slice(prefix.length).includes(this.separator),
+      )
       .map((file) => file.slice(prefix.length));
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -153,6 +153,35 @@ describe('SFTP browser interactions', () => {
     },
   );
 
+  it('keeps native Windows file URI encoding intact in workspace drag payloads', () => {
+    const uri = 'file:///C:/Users/Hassan%20M%C3%A9t%C3%A9or/project%20files/source.txt';
+    show(
+      [],
+      [
+        {
+          name: 'source.txt',
+          path: 'C:\\Users\\Hassan Météor\\project files\\source.txt',
+          uri,
+          kind: 'file',
+        },
+      ],
+    );
+    const values = new Map<string, string>();
+    const transfer = {
+      effectAllowed: '',
+      setData: (type: string, value: string) => values.set(type, value),
+    };
+    const event = new Event('dragstart', { bubbles: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    element('.workspace-entry .name').dispatchEvent(event);
+
+    expect(JSON.parse(values.get('application/x-easyssh-workspace-items') ?? '')).toEqual({
+      type: 'workspace-items',
+      uris: [uri],
+    });
+    expect(transfer.effectAllowed).toBe('copy');
+  });
+
   it('resizes the panes by dragging and keyboard and sends the resulting layout to the host', () => {
     const divider = element('#pane-resizer');
     const captured = new Set<number>();

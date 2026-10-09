@@ -22,22 +22,25 @@ describe('MCP companion runtime range', () => {
     expect(supportedCompanionNode('v24')).toBe(false);
   });
 
-  it('resolves executable names to absolute real paths without shell lookup', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'easyssh-node-path-'));
-    try {
-      const executable = join(directory, 'node');
-      const alias = join(directory, 'node-alias');
-      await writeFile(executable, '#!/bin/sh\nexit 0\n');
-      await chmod(executable, 0o700);
-      await symlink(executable, alias);
-      await expect(resolveExecutablePath('node-alias', directory)).resolves.toBe(executable);
-      await expect(resolveExecutablePath('missing-node', directory)).rejects.toThrow(
-        'Executable was not found',
-      );
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+  it.runIf(process.platform === 'linux')(
+    'resolves executable names to absolute real paths without shell lookup',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'easyssh-node-path-'));
+      try {
+        const executable = join(directory, 'node');
+        const alias = join(directory, 'node-alias');
+        await writeFile(executable, '#!/bin/sh\nexit 0\n');
+        await chmod(executable, 0o700);
+        await symlink(executable, alias);
+        await expect(resolveExecutablePath('node-alias', directory)).resolves.toBe(executable);
+        await expect(resolveExecutablePath('missing-node', directory)).rejects.toThrow(
+          'Executable was not found',
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('creates a generic absolute-path client config without discovery credentials', () => {
     const config = createMcpClientConfig(

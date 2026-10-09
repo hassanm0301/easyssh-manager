@@ -2,7 +2,7 @@
   "name": "easyssh-manager",
   "displayName": "EasySSH Manager",
   "description": "Manage SSH and SFTP connections from the local desktop extension host.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "hassanm0301",
   "license": "GPL-3.0-only",
   "repository": {
@@ -25,7 +25,8 @@
     "remote"
   ],
   "os": [
-    "linux"
+    "linux",
+    "win32"
   ],
   "extensionKind": [
     "ui"
@@ -382,8 +383,8 @@
     "format:check": "prettier --check .",
     "test:unit": "vitest run src/test/unit",
     "test:integration": "vitest run src/test/integration",
-    "test:extension": "npm run build && env -u ELECTRON_RUN_AS_NODE tsx src/test/extension/runTest.ts",
-    "test:acceptance": "EASYSSH_RUN_DOCKER=1 npm run test:extension",
+    "test:extension": "npm run build && node scripts/run-extension-tests.mjs",
+    "test:acceptance": "npm run build && node scripts/run-extension-tests.mjs --acceptance",
     "coverage": "vitest run --coverage",
     "build": "npm run build:production",
     "build:development": "node scripts/build.mjs --development",

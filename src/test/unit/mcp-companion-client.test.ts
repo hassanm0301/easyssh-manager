@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { McpIpcCompanionClient } from '../../mcp/companion';
 import { IpcFrameDecoder, encodeFrame } from '../../mcp/ipcProtocol';
 
-describe('MCP companion discovery handling', () => {
+describe.runIf(process.platform === 'linux')('MCP companion discovery handling', () => {
   let directory = '';
   let silentServer: Server | undefined;
   const silentSockets = new Set<Socket>();
