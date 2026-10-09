@@ -1,12 +1,12 @@
 import * as assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { connect as connectSocket } from 'node:net';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 
+import { EasySshError } from '../../../common/errors';
 import type { EasySshConfiguration } from '../../../configuration/ConfigurationService';
 import type { CredentialStore, StateChange, StateRepository } from '../../../connections/ports';
 import {
@@ -100,10 +100,6 @@ suite('SFTP normal-editor acceptance', () => {
         'chmod 755 "$root"',
       ].join(' && '),
     ]);
-    await waitForPort(port);
-    // The container port can accept TCP briefly before sshd is ready to authenticate.
-    await delay(1_000);
-
     first = profile('editor-first', port);
     second = profile('editor-second', port);
     state.value.connections.push(first, second);
@@ -139,7 +135,7 @@ suite('SFTP normal-editor acceptance', () => {
       isCaseSensitive: true,
       isReadonly: false,
     });
-    external = await sftpFactory.open(first.id);
+    external = await waitForSftp(sftpFactory, first.id);
   });
 
   suiteTeardown(async function () {
@@ -562,20 +558,29 @@ function tryDocker(args: string[]): void {
   }
 }
 
-async function waitForPort(port: number): Promise<void> {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const connected = await new Promise<boolean>((done) => {
-      const socket = connectSocket(port, '127.0.0.1');
-      socket.once('connect', () => {
-        socket.destroy();
-        done(true);
-      });
-      socket.once('error', () => done(false));
-    });
-    if (connected) return;
-    await delay(100);
+async function waitForSftp(
+  factory: SessionSftpClientFactory,
+  connectionId: string,
+): Promise<SftpClient> {
+  // Docker can publish the port before sshd finishes generating its host keys.
+  // Require authentication and an open SFTP subsystem rather than a TCP probe.
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      return await factory.open(connectionId);
+    } catch (error) {
+      if (
+        !(error instanceof EasySshError) ||
+        !['NETWORK', 'TIMEOUT', 'CONNECTION_LOST'].includes(error.code)
+      )
+        throw error;
+      if (Date.now() >= deadline)
+        throw new Error('Docker SSH fixture did not become ready for SFTP within 30 seconds.', {
+          cause: error,
+        });
+      await delay(250);
+    }
   }
-  throw new Error('Docker SSH fixture did not become ready.');
 }
 
 async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<void> {
