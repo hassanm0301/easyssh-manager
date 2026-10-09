@@ -144,18 +144,22 @@ suite('SFTP normal-editor acceptance', () => {
 
   suiteTeardown(async function () {
     this.timeout(30_000);
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-    registration?.dispose();
-    await external?.close();
-    await pool?.disposeAll();
-    await manager?.disposeAll();
-    assert.equal(
-      manager?.activeConnectionCount,
-      0,
-      'acceptance cleanup should close every session',
-    );
-    if (container) tryDocker(['rm', '-f', container]);
-    tryDocker(['image', 'rm', '-f', image]);
+    try {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      registration?.dispose();
+      await external?.close();
+      await pool?.disposeAll();
+      await manager?.disposeAll();
+      if (manager)
+        assert.equal(
+          manager.activeConnectionCount,
+          0,
+          'acceptance cleanup should close every session',
+        );
+    } finally {
+      if (container) tryDocker(['rm', '-f', container]);
+      tryDocker(['image', 'rm', '-f', image]);
+    }
   });
 
   test('opens, edits, Ctrl+S saves, and preserves dirty state on conflicts and permission errors', async function () {

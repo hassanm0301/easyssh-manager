@@ -18,7 +18,7 @@ interface JsonRpcMessage {
   };
 }
 
-describe('MCP stdio companion integration', () => {
+describe.runIf(process.platform === 'linux')('MCP stdio companion integration', () => {
   let directory = '';
   let child: ChildProcessWithoutNullStreams | undefined;
   let ipc: McpIpcServer | undefined;

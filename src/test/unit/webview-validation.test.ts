@@ -97,6 +97,30 @@ describe('connection editor runtime validation', () => {
     expect(() => new Script(script)).not.toThrow();
   });
 
+  it('shows a private-key example using the host platform path syntax', () => {
+    const api = {
+      Uri: { joinPath: (_base: unknown, ...parts: string[]) => ({ path: `/${parts.join('/')}` }) },
+    };
+    const webview = {
+      cspSource: 'vscode-webview-resource:',
+      asWebviewUri: (uri: { path: string }) => `vscode-webview-resource:${uri.path}`,
+    };
+    const render = (platform: NodeJS.Platform) =>
+      editorHtml(
+        webview as never,
+        api as never,
+        {} as never,
+        'nonce',
+        undefined,
+        [],
+        null,
+        platform,
+      );
+
+    expect(render('win32')).toContain('placeholder="C:\\Users\\user\\.ssh\\id_ed25519"');
+    expect(render('linux')).toContain('placeholder="/home/user/.ssh/id_ed25519"');
+  });
+
   it('does not clear an obsolete secret before metadata validation succeeds', async () => {
     let receive!: (message: unknown) => Promise<void>;
     const panel = {

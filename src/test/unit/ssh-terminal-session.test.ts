@@ -150,4 +150,98 @@ describe('SSH pseudoterminal', () => {
     await terminal[Symbol.asyncDispose]();
     expect(handleDispose).toHaveBeenCalledOnce();
   });
+
+  it('cancels a pending connection when closed and disposes a late handle', async () => {
+    const connected = deferred<SshConnectionHandle>();
+    const closeEvents = new Emitter<SshCloseReason>();
+    const handleDispose = vi.fn(async () => undefined);
+    const handle = {
+      id: 'late-handle',
+      connectionId: 'connection-1',
+      client: {},
+      onDidClose: closeEvents.event as Event<SshCloseReason>,
+      openShell: vi.fn(),
+      openSftp: vi.fn(),
+      exec: vi.fn(),
+      [Symbol.asyncDispose]: handleDispose,
+    } as unknown as SshConnectionHandle;
+    let connectToken: { isCancellationRequested: boolean } | undefined;
+    const manager = {
+      connect: vi.fn((_id: string, purpose: ConnectionPurpose) => {
+        connectToken = purpose.cancellation;
+        return connected.promise;
+      }),
+      connectCandidate: vi.fn(),
+      disposeConnection: vi.fn(),
+      disposeAll: vi.fn(),
+      activeConnectionCount: 0,
+      [Symbol.asyncDispose]: vi.fn(),
+    } as unknown as SshSessionManager;
+    const logger = new EasySshLogger(
+      { appendLine: () => undefined, dispose: () => undefined },
+      () => 'debug',
+    );
+    const terminal = new SshTerminalSession('connection-1', manager, api, logger);
+    const closes: (number | void)[] = [];
+    terminal.onDidClose((code) => closes.push(code));
+    terminal.open(undefined);
+    terminal.close();
+    await nextTurn();
+    expect(connectToken?.isCancellationRequested).toBe(true);
+    expect(closes).toEqual([1]);
+
+    connected.resolve(handle);
+    await nextTurn();
+    expect(handleDispose).toHaveBeenCalledOnce();
+    expect(handle.openShell).not.toHaveBeenCalled();
+  });
+
+  it('allows a fresh terminal session after a prior session closes', async () => {
+    const handles: SshConnectionHandle[] = [];
+    const manager = {
+      connect: vi.fn(async () => {
+        const closeEvents = new Emitter<SshCloseReason>();
+        const stream = new MockChannel();
+        const handle = {
+          id: `handle-${handles.length + 1}`,
+          connectionId: 'connection-1',
+          client: {},
+          onDidClose: closeEvents.event as Event<SshCloseReason>,
+          openShell: vi.fn(async () => ({
+            stream,
+            [Symbol.asyncDispose]: vi.fn(async () => undefined),
+          })),
+          openSftp: vi.fn(),
+          exec: vi.fn(),
+          [Symbol.asyncDispose]: vi.fn(async () => undefined),
+        } as unknown as SshConnectionHandle;
+        handles.push(handle);
+        return handle;
+      }),
+      connectCandidate: vi.fn(),
+      disposeConnection: vi.fn(),
+      disposeAll: vi.fn(),
+      activeConnectionCount: 1,
+      [Symbol.asyncDispose]: vi.fn(),
+    } as unknown as SshSessionManager;
+    const logger = new EasySshLogger(
+      { appendLine: () => undefined, dispose: () => undefined },
+      () => 'debug',
+    );
+    const first = new SshTerminalSession('connection-1', manager, api, logger, () => 'first');
+    first.open(undefined);
+    await nextTurn();
+    expect(handles[0]!.openShell).toHaveBeenCalledOnce();
+    first.close();
+    await nextTurn();
+
+    const second = new SshTerminalSession('connection-1', manager, api, logger, () => 'second');
+    second.open(undefined);
+    await nextTurn();
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(manager.connect).toHaveBeenCalledTimes(2);
+    expect(handles[1]!.openShell).toHaveBeenCalledOnce();
+    second.close();
+    await nextTurn();
+  });
 });

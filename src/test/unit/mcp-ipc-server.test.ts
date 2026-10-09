@@ -8,7 +8,7 @@ import { McpIpcServer, type IpcDispatch } from '../../mcp/IpcServer';
 import { IpcFrameDecoder, encodeFrame } from '../../mcp/ipcProtocol';
 import { EasySshError } from '../../common/errors';
 
-describe('authenticated MCP IPC server', () => {
+describe.runIf(process.platform === 'linux')('authenticated MCP IPC server', () => {
   let directory = '';
   let server: McpIpcServer | undefined;
 

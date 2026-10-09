@@ -410,8 +410,18 @@ export function editorHtml(
   connection?: RemoteConnection,
   folders: readonly ConnectionFolder[] = [],
   initialFolderId: string | null = null,
+  platform: NodeJS.Platform = process.platform,
 ): string {
-  return renderEditorHtml(webview, api, extensionUri, nonce, connection, folders, initialFolderId);
+  return renderEditorHtml(
+    webview,
+    api,
+    extensionUri,
+    nonce,
+    connection,
+    folders,
+    initialFolderId,
+    platform,
+  );
 }
 
 function renderEditorHtml(
@@ -422,6 +432,7 @@ function renderEditorHtml(
   connection?: RemoteConnection,
   folders: readonly ConnectionFolder[] = [],
   initialFolderId: string | null = null,
+  platform: NodeJS.Platform = process.platform,
 ): string {
   const initial = JSON.stringify(
     connection
@@ -486,7 +497,7 @@ ${styles}<title>${heading}</title></head><body>
       <div class="card-header"><div><h2 id="authentication-heading">Authentication</h2><p>Choose how EasySSH should authenticate this connection.</p></div><span class="codicon codicon-shield" aria-hidden="true"></span></div>
       <div class="form-grid">
         <label class="field span-2"><span class="field-label">Method</span><select id="auth"><option value="agent">SSH agent</option><option value="password">Password</option><option value="privateKey">Private key</option></select></label>
-        <label id="keyRow" class="field span-2"><span class="field-label">Private-key path</span><input id="keyPath" autocomplete="off" spellcheck="false" placeholder="/home/user/.ssh/id_ed25519"><span class="field-help">The key stays on disk and is read only when connecting.</span></label>
+        <label id="keyRow" class="field span-2"><span class="field-label">Private-key path</span><input id="keyPath" autocomplete="off" spellcheck="false" placeholder="${platform === 'win32' ? 'C:\\Users\\user\\.ssh\\id_ed25519' : '/home/user/.ssh/id_ed25519'}"><span class="field-help">The key stays on disk and is read only when connecting.</span></label>
         <label id="passwordRow" class="field span-2"><span class="label-line"><span class="field-label">Password</span><span id="passwordStatus" class="badge success" hidden><span class="codicon codicon-lock" aria-hidden="true"></span>Stored</span></span><input id="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the stored password"></label>
         <label id="phraseRow" class="field span-2"><span class="label-line"><span class="field-label">Key passphrase</span><span id="phraseStatus" class="badge success" hidden><span class="codicon codicon-lock" aria-hidden="true"></span>Stored</span></span><input id="passphrase" type="password" autocomplete="new-password" placeholder="Leave blank to keep the stored passphrase"></label>
         <label id="clearPasswordRow" class="checkbox-field secret-clear"><input id="clearPassword" type="checkbox"><span>Delete the stored password when saving</span></label>

@@ -21,7 +21,7 @@ jobs:
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
-          name: easyssh-manager-vsix
+          name: easyssh-manager-vsix-linux
           path: artifacts/easyssh-manager.vsix
           if-no-files-found: error
   extension-host:
@@ -40,15 +40,47 @@ jobs:
     needs: static-and-unit
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t easyssh-manager-fixture test/fixtures/openssh
-      - run: docker run --rm -d --name easyssh-manager-fixture -p 2222:2222 easyssh-manager-fixture
-      - name: Wait for OpenSSH fixture
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: SSH, SFTP and MCP transport acceptance
+        run: npm run test:integration
+        env:
+          EASYSSH_RUN_DOCKER: '1'
+      - name: SFTP editor acceptance
+        run: xvfb-run -a npm run test:acceptance
+      - name: Clean up test containers
+        if: always()
+        shell: bash
         run: |
-          for attempt in {1..50}; do
-            if docker exec easyssh-manager-fixture /usr/sbin/sshd -T >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 0.2
-          done
-          docker logs easyssh-manager-fixture
-          exit 1
+          containers=$(docker ps -a --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^easyssh-manager-(test|editor-acceptance):/ {print $1}')
+          if [ -n "$containers" ]; then docker rm -f $containers; fi
+  windows-static-and-unit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easyssh-manager-vsix-windows
+          path: artifacts/easyssh-manager.vsix
+          if-no-files-found: error
+  windows-extension-host:
+    runs-on: windows-latest
+    needs: windows-static-and-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:extension

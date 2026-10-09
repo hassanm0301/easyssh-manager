@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { posix } from 'node:path';
+import { posix, win32 } from 'node:path';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { Writable } from 'node:stream';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { EasySshError } from '../../common/errors';
 import { RemoteResourceCache } from '../../sftp/RemoteResourceCache';
@@ -24,6 +28,7 @@ interface TestUri {
 }
 
 function uri(path: string, scheme = 'mem', authority = '', query = '', fragment = ''): TestUri {
+  if (scheme === 'file') return localFileUri(path, query, fragment);
   const normalized = path.startsWith('/') ? path : `/${path}`;
   return {
     scheme,
@@ -31,9 +36,9 @@ function uri(path: string, scheme = 'mem', authority = '', query = '', fragment 
     path: normalized,
     query,
     fragment,
-    fsPath: scheme === 'file' ? normalized : '',
+    fsPath: '',
     toString: () =>
-      `${scheme}://${authority}${normalized}${query ? `?${query}` : ''}${fragment ? `#${fragment}` : ''}`,
+      `${scheme}://${authority}${encodeURI(normalized)}${query ? `?${query}` : ''}${fragment ? `#${fragment}` : ''}`,
     with: (change) =>
       uri(
         change.path ?? normalized,
@@ -45,12 +50,99 @@ function uri(path: string, scheme = 'mem', authority = '', query = '', fragment 
   };
 }
 
+function localFileUri(fsPath: string, query = '', fragment = ''): TestUri {
+  const url = pathToFileURL(fsPath);
+  url.search = query;
+  url.hash = fragment;
+  return {
+    scheme: 'file',
+    authority: url.host,
+    path: decodeURIComponent(url.pathname),
+    query,
+    fragment,
+    fsPath: fileURLToPath(url),
+    toString: () => url.href,
+    with: (change) => {
+      const nextPath = change.path === undefined ? fsPath : localPathFromUriPath(change.path);
+      return localFileUri(nextPath, change.query ?? query, change.fragment ?? fragment);
+    },
+  };
+}
+
+function localPathFromUriPath(path: string): string {
+  return process.platform === 'win32' && /^\/[A-Za-z]:\//.test(path)
+    ? path.slice(1).replaceAll('/', '\\')
+    : path;
+}
+
 function parse(value: string): TestUri {
   const match = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)(\/[^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(
     value,
   );
   if (!match?.[1] || match[2] === undefined || !match[3]) throw new Error('invalid URI');
-  return uri(match[3], match[1], match[2], match[4] ?? '', match[5] ?? '');
+  return uri(decodeURIComponent(match[3]), match[1], match[2], match[4] ?? '', match[5] ?? '');
+}
+
+function windowsFileUri(fsPath: string): TestUri {
+  const normalized = win32.normalize(fsPath);
+  if (normalized.startsWith('\\\\')) {
+    const [, , authority, ...segments] = normalized.split('\\');
+    const path = `/${segments.join('/')}`;
+    return {
+      scheme: 'file',
+      authority: authority ?? '',
+      path,
+      query: '',
+      fragment: '',
+      fsPath: normalized,
+      toString: () => `file://${authority ?? ''}${encodeURI(path)}`,
+      with: (change) => {
+        const nextPath = change.path ?? path;
+        const nextAuthority = authority ?? '';
+        return windowsFileUri(`\\\\${nextAuthority}${nextPath.replaceAll('/', '\\')}`);
+      },
+    };
+  }
+  const path = `/${normalized.replaceAll('\\', '/')}`;
+  return {
+    scheme: 'file',
+    authority: '',
+    path,
+    query: '',
+    fragment: '',
+    fsPath: normalized,
+    toString: () => `file://${encodeURI(path)}`,
+    with: (change) =>
+      windowsFileUri((change.path ?? path).replace(/^\//, '').replaceAll('/', '\\')),
+  };
+}
+
+function windowsWorkspaceHost(workspace: MemoryWorkspace) {
+  const host = workspace.host() as ReturnType<MemoryWorkspace['host']> & {
+    Uri: Record<string, unknown>;
+  };
+  host.Uri = {
+    parse: (value: string) => {
+      if (!value.startsWith('file://')) return parse(value);
+      const match = /^file:\/\/([^/]*)(\/.*)$/.exec(value);
+      if (!match?.[2]) throw new Error('invalid file URI');
+      const decodedPath = decodeURIComponent(match[2]);
+      return match[1]
+        ? windowsFileUri(`\\\\${match[1]}${decodedPath.replaceAll('/', '\\')}`)
+        : windowsFileUri(decodedPath.replace(/^\//, '').replaceAll('/', '\\'));
+    },
+    file: (value: string) => windowsFileUri(value),
+    joinPath: (base: TestUri, ...segments: string[]) => {
+      const joined =
+        base.scheme === 'file'
+          ? win32.join(base.fsPath, ...segments)
+          : posix.join(base.path, ...segments);
+      return base.scheme === 'file'
+        ? windowsFileUri(joined)
+        : uri(joined, base.scheme, base.authority, base.query, base.fragment);
+    },
+  };
+  return host;
 }
 
 class MemoryWorkspace {
@@ -149,6 +241,7 @@ class MemoryRemote implements SftpClient {
   readonly files = new Map<string, Uint8Array>();
   readonly directories = new Set<string>(['/']);
   readonly calls: string[] = [];
+  readonly streamedTargets: string[] = [];
 
   async lstat(path: string): Promise<RemoteStat> {
     this.calls.push(`lstat:${path}`);
@@ -194,6 +287,20 @@ class MemoryRemote implements SftpClient {
   async unlink(path: string): Promise<void> {
     if (!this.files.delete(path)) throw new EasySshError('NOT_FOUND', `${path} missing`);
   }
+  createWriteStream(path: string): Writable {
+    this.streamedTargets.push(path);
+    const chunks: Buffer[] = [];
+    return new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+      final: (callback) => {
+        this.files.set(path, Buffer.concat(chunks));
+        callback();
+      },
+    });
+  }
   async rmdir(): Promise<void> {}
   async close(): Promise<void> {}
 }
@@ -230,6 +337,62 @@ const neverCancelled = {
 };
 
 describe('workspace pane authorization', () => {
+  it('resolves native Windows drive, relative, home, and UNC paths through faithful file URIs', async () => {
+    const workspace = new MemoryWorkspace();
+    const drivePaths = [
+      'C:\\work\\app',
+      'C:\\work\\sibling',
+      'D:\\Data Space\\Ω',
+      'C:\\Users\\alice\\Documents',
+    ];
+    workspace.roots = [{ name: 'drive', uri: windowsFileUri('C:\\work\\app') as never }];
+    for (const path of drivePaths) {
+      const target = windowsFileUri(path);
+      workspace.stats.set(target.toString(), { type: workspace.FileType.Directory, size: 0 });
+      workspace.children.set(target.toString(), []);
+    }
+    const pane = new WorkspacePaneService(windowsWorkspaceHost(workspace) as never, {
+      platform: 'win32',
+      homeDirectory: 'C:\\Users\\alice',
+    });
+    const root = pane.initialize().roots[0]!;
+
+    const drive = await pane.resolveTypedDirectory('D:\\Data Space\\Ω');
+    expect(pane.displayPath(drive)).toBe('D:\\Data Space\\Ω');
+    expect(drive).toBe('file:///D:/Data%20Space/%CE%A9');
+    const roundTrip = await pane.resolveTypedDirectory(drive);
+    expect(pane.displayPath(roundTrip)).toBe('D:\\Data Space\\Ω');
+    expect(pane.displayPath(await pane.resolveTypedDirectory('..\\sibling', root.uri))).toBe(
+      'C:\\work\\sibling',
+    );
+    expect(pane.displayPath(await pane.resolveTypedDirectory('~\\Documents', root.uri))).toBe(
+      'C:\\Users\\alice\\Documents',
+    );
+    await expect(pane.resolveTypedDirectory('C:folder', root.uri)).rejects.toThrow(
+      'Drive-relative paths are ambiguous',
+    );
+    await expect(pane.resolveTypedDirectory('\\folder', root.uri)).rejects.toThrow(
+      'Root-relative paths are ambiguous',
+    );
+
+    const uncWorkspace = new MemoryWorkspace();
+    const uncRoot = windowsFileUri('\\\\server\\share\\work');
+    const uncChild = windowsFileUri('\\\\server\\share\\folder');
+    uncWorkspace.roots = [{ name: 'unc', uri: uncRoot as never }];
+    uncWorkspace.stats.set(uncChild.toString(), {
+      type: uncWorkspace.FileType.Directory,
+      size: 0,
+    });
+    uncWorkspace.children.set(uncChild.toString(), []);
+    const uncPane = new WorkspacePaneService(windowsWorkspaceHost(uncWorkspace) as never, {
+      platform: 'win32',
+    });
+    uncPane.initialize();
+    expect(
+      uncPane.displayPath(await uncPane.resolveTypedDirectory('\\\\server\\share\\folder')),
+    ).toBe('\\\\server\\share\\folder');
+  });
+
   it('issues only lazily listed roots and rejects prefix, query, encoded, and revoked URI attempts', async () => {
     const workspace = new MemoryWorkspace();
     workspace.roots = [
@@ -351,6 +514,126 @@ describe('workspace pane authorization', () => {
 });
 
 describe('workspace upload planner and executor', () => {
+  it('streams native file URIs from fsPath, including Unicode and zero-byte files, then atomically commits', async () => {
+    const directory = await mkdtemp(posix.join(tmpdir(), 'easyssh upload '));
+    try {
+      const sourcePath = posix.join(directory, 'résumé 雪.txt');
+      const emptyPath = posix.join(directory, 'empty.txt');
+      await writeFile(sourcePath, 'native bytes ☃');
+      await writeFile(emptyPath, new Uint8Array());
+      const workspace = new MemoryWorkspace();
+      const remote = new MemoryRemote();
+      remote.directories.add('/target');
+      const { service, host } = uploadHarness(workspace, remote);
+      host.workspace.fs.stat.mockImplementation(async (target: TestUri) => {
+        const metadata = await stat(target.fsPath);
+        return {
+          type: metadata.isDirectory() ? workspace.FileType.Directory : workspace.FileType.File,
+          size: metadata.size,
+          ctime: metadata.ctimeMs,
+          mtime: metadata.mtimeMs,
+        };
+      });
+      const summary = await service.uploadWorkspaceItems({
+        connectionId: CONNECTION_ID,
+        sourceUris: [uri(sourcePath, 'file') as never, uri(emptyPath, 'file') as never],
+        targetRemotePath: '/target',
+        cancellation: neverCancelled,
+      });
+      expect(summary).toMatchObject({
+        uploaded: 2,
+        failed: [],
+        cancelled: false,
+        bytesAccurate: true,
+      });
+      expect(Buffer.from(remote.files.get('/target/résumé 雪.txt') ?? []).toString()).toBe(
+        'native bytes ☃',
+      );
+      expect(remote.files.get('/target/empty.txt')).toHaveLength(0);
+      expect(remote.streamedTargets).toHaveLength(2);
+      expect(remote.streamedTargets.every((path) => path.includes('.easyssh-upload-'))).toBe(true);
+      expect(host.workspace.fs.readFile).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not read through workspace.fs for native streaming and cleans its remote temp after cancellation', async () => {
+    const directory = await mkdtemp(posix.join(tmpdir(), 'easyssh cancel '));
+    try {
+      const sourcePath = posix.join(directory, 'large.txt');
+      await writeFile(sourcePath, 'native payload');
+      const workspace = new MemoryWorkspace();
+      const remote = new MemoryRemote();
+      remote.directories.add('/target');
+      const { service, host } = uploadHarness(workspace, remote);
+      host.workspace.fs.stat.mockImplementation(async (target: TestUri) => {
+        const metadata = await stat(target.fsPath);
+        return { type: workspace.FileType.File, size: metadata.size, ctime: 0, mtime: 0 };
+      });
+      let cancelled = false;
+      const cancellation = {
+        get isCancellationRequested() {
+          return cancelled;
+        },
+        onCancellationRequested(listener: () => void) {
+          cancelled = true;
+          listener();
+          return { dispose: () => undefined };
+        },
+      };
+      const summary = await service.uploadWorkspaceItems({
+        connectionId: CONNECTION_ID,
+        sourceUris: [uri(sourcePath, 'file') as never],
+        targetRemotePath: '/target',
+        cancellation,
+      });
+      expect(summary.cancelled).toBe(true);
+      expect(summary.uploaded).toBe(0);
+      expect(host.workspace.fs.readFile).not.toHaveBeenCalled();
+      expect([...remote.files.keys()].some((path) => path.includes('.easyssh-upload-'))).toBe(
+        false,
+      );
+      expect(remote.files.has('/target/large.txt')).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an inaccessible native source and removes its uncommitted remote temporary file', async () => {
+    const directory = await mkdtemp(posix.join(tmpdir(), 'easyssh inaccessible '));
+    try {
+      const sourcePath = posix.join(directory, 'removed before read.txt');
+      const workspace = new MemoryWorkspace();
+      const remote = new MemoryRemote();
+      remote.directories.add('/target');
+      const { service, host } = uploadHarness(workspace, remote);
+      // Model a provider whose metadata succeeded but whose backing file became
+      // inaccessible before createReadStream opened it.
+      host.workspace.fs.stat.mockResolvedValue({
+        type: workspace.FileType.File,
+        size: 12,
+        ctime: 0,
+        mtime: 0,
+      });
+      const summary = await service.uploadWorkspaceItems({
+        connectionId: CONNECTION_ID,
+        sourceUris: [uri(sourcePath, 'file') as never],
+        targetRemotePath: '/target',
+        cancellation: neverCancelled,
+      });
+      expect(summary.uploaded).toBe(0);
+      expect(summary.failed).toHaveLength(1);
+      expect(summary.failed[0]?.path).toBe('removed before read.txt');
+      expect(remote.files.has('/target/removed before read.txt')).toBe(false);
+      expect([...remote.files.keys()].some((path) => path.includes('.easyssh-upload-'))).toBe(
+        false,
+      );
+      expect(host.workspace.fs.readFile).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('plans deep/empty folders iteratively, preserves hierarchy, skips links, and removes descendant roots', async () => {
     const workspace = new MemoryWorkspace();
     workspace.putDirectory('/workspace', [
